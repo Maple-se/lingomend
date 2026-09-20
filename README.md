@@ -38,7 +38,18 @@ No production-ready application is available yet.
 4. Implement the macOS menu-bar shell and Smart Scope.
 5. Add expression memory only after the main input flow is reliable.
 
+## Development requirements
+
+- macOS 14 or later
+- A complete Xcode installation with a matching macOS SDK and Swift toolchain
+
+After selecting the Xcode developer directory, run:
+
+```sh
+swift build
+swift test
+```
+
 ## License
 
 MIT. Third-party code, if introduced, will retain its original notices and be recorded in `THIRD_PARTY_NOTICES.md`.
-
