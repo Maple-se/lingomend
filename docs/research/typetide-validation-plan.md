@@ -6,6 +6,11 @@ Run this spike immediately after the initial LingoMend repository is published a
 
 Target duration: 5–7 focused development days.
 
+The dated evidence and application matrix are in
+[`typetide-validation-log.md`](typetide-validation-log.md). Do not make the
+fork-versus-reimplementation decision until the matrix and safety gates are
+complete.
+
 ## Isolation
 
 - Use a separate local checkout or experimental repository.
@@ -38,6 +43,11 @@ Target duration: 5–7 focused development days.
 - Fall back to copy-only when replacement cannot be proven safe.
 - Respect an excluded-app list.
 - Avoid writing source text, model output, and credentials to logs.
+
+For every application, record the result and the exact failure mode. A passing
+unit test or a mocked editor test does not count as an application-level pass.
+Any wrong-field write, lost user clipboard change, or broken undo is a gate
+failure until fixed and retested.
 
 ## Performance budget
 

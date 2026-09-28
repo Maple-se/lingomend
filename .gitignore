@@ -23,3 +23,5 @@ xcuserdata/
 *.log
 Diagnostics/
 
+# Isolated Stage 0 upstream checkout
+.stage0/

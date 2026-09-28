@@ -10,6 +10,8 @@ LingoMend is a lightweight, system-wide AI English expression coach for non-nati
 
 LingoMend is in Stage 0: product validation and system-integration research. The current focus is validating a low-friction macOS workflow and deciding whether to build on the MIT-licensed TypeTide system layer or implement a clean native bridge.
 
+The isolated [TypeTide validation log](docs/research/typetide-validation-log.md) records the pinned upstream commit, build and test evidence, and the ten-application test matrix. No system-layer base decision has been made.
+
 No production-ready application is available yet.
 
 ## Product principles

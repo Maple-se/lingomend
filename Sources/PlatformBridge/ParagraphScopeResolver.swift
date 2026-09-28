@@ -61,7 +61,7 @@ public struct ParagraphScopeResolver: Sendable {
         )
         let paragraph = source.substring(with: paragraphRange)
         let leadingWhitespace = paragraph.prefix { $0.isWhitespace }.utf16.count
-        let trailingWhitespace = paragraph.reversed().prefix { $0.isWhitespace }.utf16.count
+        let trailingWhitespace = String(paragraph.reversed().prefix { $0.isWhitespace }).utf16.count
         let trimmedRange = NSRange(
             location: paragraphRange.location + leadingWhitespace,
             length: max(0, paragraphRange.length - leadingWhitespace - trailingWhitespace)
@@ -75,4 +75,3 @@ public struct ParagraphScopeResolver: Sendable {
         )
     }
 }
-
