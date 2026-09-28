@@ -82,6 +82,25 @@ downloaded for this baseline.
 
 ## Target application matrix
 
+User scope update: do not install Chrome, Notion, or Slack on this Mac.
+Their native-client rows remain untested and deferred; other applications
+must not be counted as substitutes. The user approved manually granting
+Accessibility access to the TypeTide experimental build.
+
+The fixed Release build is staged at `LingoMend/.stage0/apps/TypeTide.app`.
+It has a local ad-hoc bundle signature (`com.xnu.typetide`), and
+`codesign --verify --strict` passes. The source baseline is unchanged.
+Accessibility authorization is pending manual completion; do not infer the
+grant from the user's approval alone. Keep this copy at its fixed path during
+testing. A rebuilt or replaced copy may require authorization again.
+
+Permission handoff observation: macOS 27 calls this settings pane “Device
+Control and Data Access” (设备控制和数据访问). Its TypeTide switch is on, but the
+running staged app still displays “Grant Permission”. The running executable
+path was verified as `.stage0/apps/TypeTide.app/Contents/MacOS/TypeTide`.
+The existing entry may refer to a previous build; the user must authorize the
+current copy before live cross-application tests can proceed.
+
 `Pending` means **no compatibility claim**. Use synthetic, non-sensitive text
 only. Run each scenario with a stable original clipboard item and repeat with
 the clipboard changed during model latency.
@@ -90,12 +109,12 @@ the clipboard changed during model latency.
 | --- | --- | --- | --- | --- | --- |
 | TextEdit | Installed | Pending | Pending | Pending | Pending |
 | Safari | Installed | Pending | Pending | Pending | Pending |
-| Google Chrome | Not found | Pending | Pending | Pending | Pending |
+| Google Chrome | Deferred: user declined installation | Untested | Untested | Untested | Untested |
 | Microsoft Word | Installed | Pending | Pending | Pending | Pending |
 | Apple Mail | Installed | Pending | Pending | Pending | Pending |
-| Notion | Not found | Pending | Pending | Pending | Pending |
+| Notion | Deferred: user declined installation | Untested | Untested | Untested | Untested |
 | Obsidian | Installed | Pending | Pending | Pending | Pending |
-| Slack | Not found | Pending | Pending | Pending | Pending |
+| Slack | Deferred: user declined installation | Untested | Untested | Untested | Untested |
 | VS Code | Installed | Pending | Pending | Pending | Pending |
 | ChatGPT web input | Safari installed; web session not checked | Pending | Pending | Pending | Pending |
 
@@ -122,7 +141,8 @@ the clipboard changed during model latency.
   grant; test TextEdit, Safari, and Mail.
 - Day 3: test Word, Obsidian, and VS Code; record rich-text and editor-specific
   selection behavior.
-- Day 4: test Chrome, Notion, Slack, and ChatGPT web input once available.
+- Day 4: test ChatGPT web input and repeat failures in available applications.
+  Chrome, Notion, and Slack native-client tests are deferred per user request.
 - Day 5: patch any focus, source-revision, clipboard, and undo failures in the
   **experimental fork**, then repeat the affected app cases.
 - Day 6: measure idle CPU/RSS, Release app size, trigger latency, scope latency,
@@ -141,3 +161,7 @@ the performance and distribution checks in the validation plan are complete.
 If only isolated system modules pass, evaluate migration with retained MIT
 notices. If the safety changes require replacing most of capture/replacement,
 prefer LingoMend's own native bridge. No outcome has been selected yet.
+
+The three deferred native-client rows prevent a claim of ten-application
+coverage. Report any interim recommendation with this explicit limitation;
+do not silently treat the original coverage gate as passed.
