@@ -45,8 +45,8 @@ public struct ParagraphScopeResolver: Sendable {
 
         let caret = min(selected.location, totalLength)
         let beforeCaret = NSRange(location: 0, length: caret)
-        let previousBreak = source.range(
-            of: "\n",
+        let previousBreak = source.rangeOfCharacter(
+            from: .newlines,
             options: .backwards,
             range: beforeCaret
         )
@@ -55,7 +55,11 @@ public struct ParagraphScopeResolver: Sendable {
             : NSMaxRange(previousBreak)
 
         let afterCaret = NSRange(location: caret, length: totalLength - caret)
-        let nextBreak = source.range(of: "\n", options: [], range: afterCaret)
+        let nextBreak = source.rangeOfCharacter(
+            from: .newlines,
+            options: [],
+            range: afterCaret
+        )
         let paragraphEnd = nextBreak.location == NSNotFound
             ? totalLength
             : nextBreak.location

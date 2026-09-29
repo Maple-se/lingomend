@@ -11,7 +11,11 @@ public enum ReplacementRefusal: Equatable, Sendable {
 /// A pure, conservative gate. The native bridge must acquire `current`
 /// immediately before writing and choose copy-only on every refusal.
 public struct ReplacementPreflight: Sendable {
-    public init() {}
+    private let resolver: ParagraphScopeResolver
+
+    public init(resolver: ParagraphScopeResolver = ParagraphScopeResolver()) {
+        self.resolver = resolver
+    }
 
     public func refusal(
         original: TextSnapshot,
@@ -48,6 +52,10 @@ public struct ReplacementPreflight: Sendable {
               scope.range.location <= source.length,
               scope.range.length <= source.length - scope.range.location,
               source.substring(with: scope.range) == scope.text else {
+            return .invalidScope
+        }
+
+        guard resolver.resolve(snapshot: original) == scope else {
             return .invalidScope
         }
 

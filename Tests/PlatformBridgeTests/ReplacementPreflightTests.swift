@@ -92,6 +92,20 @@ final class ReplacementPreflightTests: XCTestCase {
         )
     }
 
+    func testValidTextAtDifferentRangeStillRefuses() {
+        let forgedScope = ResolvedTextScope(
+            range: NSRange(location: 0, length: 5),
+            text: "Write",
+            kind: .explicitSelection
+        )
+        XCTAssertEqual(
+            ReplacementPreflight().refusal(
+                original: snapshot(), current: snapshot(), scope: forgedScope
+            ),
+            .invalidScope
+        )
+    }
+
     func testMissingElementIdentityRefuses() {
         XCTAssertEqual(
             ReplacementPreflight().refusal(

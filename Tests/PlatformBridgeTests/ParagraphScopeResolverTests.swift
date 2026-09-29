@@ -103,4 +103,19 @@ final class ParagraphScopeResolverTests: XCTestCase {
 
         XCTAssertNil(ParagraphScopeResolver().resolve(snapshot: snapshot))
     }
+
+    func testUnicodeLineSeparatorKeepsAdjacentTextOutOfScope() {
+        let first = "First thought 轻载条件下."
+        let second = "SECOND_MUST_STAY_OUT"
+        let text = "\(first)\u{2028}\(second)"
+        let snapshot = TextSnapshot(
+            applicationIdentifier: "test",
+            focusedElementIdentifier: "editor",
+            text: text,
+            selectedRange: NSRange(location: 8, length: 0),
+            revisionToken: "1"
+        )
+
+        XCTAssertEqual(ParagraphScopeResolver().resolve(snapshot: snapshot)?.text, first)
+    }
 }
