@@ -23,5 +23,8 @@ xcuserdata/
 *.log
 Diagnostics/
 
+# Private validation notes, including Markdown logs outside .stage0/
+*validation-log*.md
+
 # Isolated Stage 0 upstream checkout
 .stage0/
