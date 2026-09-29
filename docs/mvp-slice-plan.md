@@ -1,7 +1,11 @@
 # macOS MVP: first useful slice
 
-Status: in progress, 2026-09-29. This is a LingoMend implementation plan,
-not a plan to turn TypeTide into the product.
+Status: in progress, 2026-09-29. The menu-bar preview, shortcut registration,
+AX-only reader, deterministic local responder, copy action, and opt-in local
+expression journal now compile; the demo preview has been observed running.
+Cross-app capture and replacement have not yet passed LingoMend app-level
+tests. This is a LingoMend implementation plan, not a plan to turn TypeTide
+into the product.
 
 ## 1. Capture and Smart Scope
 

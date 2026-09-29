@@ -10,7 +10,9 @@ let package = Package(
     products: [
         .library(name: "CoachCore", targets: ["CoachCore"]),
         .library(name: "LearningCore", targets: ["LearningCore"]),
-        .library(name: "PlatformBridge", targets: ["PlatformBridge"])
+        .library(name: "PlatformBridge", targets: ["PlatformBridge"]),
+        .library(name: "MVPFlow", targets: ["MVPFlow"]),
+        .executable(name: "LingoMendApp", targets: ["LingoMendApp"])
     ],
     targets: [
         .target(name: "CoachCore"),
@@ -19,6 +21,14 @@ let package = Package(
             dependencies: ["CoachCore"]
         ),
         .target(name: "PlatformBridge"),
+        .target(
+            name: "MVPFlow",
+            dependencies: ["CoachCore", "PlatformBridge"]
+        ),
+        .executableTarget(
+            name: "LingoMendApp",
+            dependencies: ["CoachCore", "LearningCore", "MVPFlow", "PlatformBridge"]
+        ),
         .testTarget(
             name: "CoachCoreTests",
             dependencies: ["CoachCore"]
@@ -30,7 +40,10 @@ let package = Package(
         .testTarget(
             name: "PlatformBridgeTests",
             dependencies: ["PlatformBridge"]
+        ),
+        .testTarget(
+            name: "MVPFlowTests",
+            dependencies: ["CoachCore", "MVPFlow", "PlatformBridge"]
         )
     ]
 )
-

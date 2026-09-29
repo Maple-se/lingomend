@@ -37,5 +37,17 @@ final class ReuseMatcherTests: XCTestCase {
         XCTAssertEqual(match?.confidence, 0.85)
         XCTAssertEqual(match?.isCanonical, false)
     }
-}
 
+    func testDoesNotCountExpressionEmbeddedInsideAnotherWord() {
+        let expression = Expression(
+            sourcePhrase: "轻载条件下",
+            canonicalTarget: "under light-load conditions",
+            category: .collocation
+        )
+
+        XCTAssertNil(ReuseMatcher().match(
+            expression: expression,
+            in: "under light-load conditionships"
+        ))
+    }
+}

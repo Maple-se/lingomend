@@ -21,6 +21,25 @@ and release checks.
 
 No production-ready application is available yet.
 
+## Local development preview
+
+The native menu-bar preview uses a deterministic local example; it is not yet
+connected to an AI provider. Build an ad-hoc signed app with:
+
+```sh
+sh Scripts/build-local-app.sh
+```
+
+Open `.build/LingoMend.app`, then use the `LM` menu's **打开演示预览**
+to inspect the UI without granting permissions. To capture text from another
+app, manually grant Accessibility permission and press **Control-Option-L**
+with the target editor focused. Capture is AX-only. The preview can copy a
+suggestion; Replace is deliberately disabled until LingoMend's own
+focus/source/undo safety tests pass. No text is sent to a network service.
+
+Saved expressions and later user-triggered independent-use evidence are kept
+under the user's Application Support directory. Full drafts are not stored.
+
 ## Product principles
 
 - The user writes first; AI helps second.

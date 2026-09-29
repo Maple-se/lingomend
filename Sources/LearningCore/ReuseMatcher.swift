@@ -50,6 +50,20 @@ public struct ReuseMatcher: Sendable {
 
     private func containsPhrase(_ phrase: String, in draft: String) -> Bool {
         guard !phrase.isEmpty else { return false }
-        return draft.range(of: phrase) != nil
+        var searchStart = draft.startIndex
+        while searchStart < draft.endIndex,
+              let range = draft.range(of: phrase, range: searchStart..<draft.endIndex) {
+            let before = range.lowerBound == draft.startIndex
+                ? nil
+                : draft[draft.index(before: range.lowerBound)]
+            let after = range.upperBound == draft.endIndex
+                ? nil
+                : draft[range.upperBound]
+            let leftBoundary = before.map { !$0.isLetter && !$0.isNumber } ?? true
+            let rightBoundary = after.map { !$0.isLetter && !$0.isNumber } ?? true
+            if leftBoundary && rightBoundary { return true }
+            searchStart = range.upperBound
+        }
+        return false
     }
 }
