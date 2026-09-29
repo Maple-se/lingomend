@@ -38,11 +38,23 @@ For each, check trigger, exact selected-text capture, replacement, and native
 undo where the experiment supports them. Separately probe focus changes,
 source edits during generation, and clipboard changes; any wrong-field write
 or clipboard loss is a disqualifier for **reusing that replacement path**.
+An implementation that lacks the necessary pre-write checks, or restores a
+stale clipboard unconditionally, can be disqualified by source audit without
+deliberately triggering a hazardous write or clipboard loss on this Mac.
 
 The gate may conclude that only capture or shortcut techniques are reusable.
 It does not require patching TypeTide into a complete LingoMend product.
-Unverified scenarios stay explicit in the log and must be tested against
+Unverified scenarios stay explicit in the private local log and must be tested against
 LingoMend's own bridge before MVP release.
+
+## Gate outcome — 2026-09-29
+
+The three representative normal paths worked once each. VS Code required
+TypeTide's clipboard capture fallback; TextEdit's caret-only path captured a
+whole multi-line field. Source audit disqualified direct reuse of TypeTide's
+replacement and clipboard helpers. No TypeTide source was copied. The
+LingoMend MVP may start, while its own focus/source/clipboard/undo tests
+remain a release gate. Detailed observations remain local.
 
 ## MVP first slice
 

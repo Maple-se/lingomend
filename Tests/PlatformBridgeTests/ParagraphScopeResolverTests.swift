@@ -91,4 +91,16 @@ final class ParagraphScopeResolverTests: XCTestCase {
         XCTAssertEqual(scope?.text, second)
         XCTAssertEqual(scope?.kind, .paragraphAtCaret)
     }
+
+    func testWhitespaceOnlyFieldHasNoScope() {
+        let snapshot = TextSnapshot(
+            applicationIdentifier: "test",
+            focusedElementIdentifier: "editor",
+            text: "   ",
+            selectedRange: NSRange(location: 2, length: 0),
+            revisionToken: "1"
+        )
+
+        XCTAssertNil(ParagraphScopeResolver().resolve(snapshot: snapshot))
+    }
 }

@@ -29,6 +29,7 @@ public struct ParagraphScopeResolver: Sendable {
         }
 
         let trimmedWholeField = snapshot.text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedWholeField.isEmpty else { return nil }
         // A short multi-line editor is still a document. Only a genuinely
         // single-line field is safe to treat as one complete thought.
         if totalLength <= wholeFieldThreshold,

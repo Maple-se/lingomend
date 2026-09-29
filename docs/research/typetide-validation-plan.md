@@ -5,8 +5,8 @@
 Run a short, isolated spike alongside LingoMend MVP foundations. ADR-0002
 narrows this plan: the goal is targeted reuse, not adoption of all TypeTide.
 
-The dated evidence and application matrix are in
-[`typetide-validation-log.md`](typetide-validation-log.md). Do not make the
+The dated evidence and application matrix are retained in ignored local
+Stage 0 notes, not published in this repository. Do not make the
 targeted-reuse decision until the representative-app and safety checks are
 recorded. Unverified scenarios must remain open for LingoMend's own bridge.
 
@@ -15,7 +15,7 @@ recorded. Unverified scenarios must remain open for LingoMend's own bridge.
 - Use a separate local checkout or experimental repository.
 - Pin and record the exact upstream commit.
 - Do not merge upstream source into LingoMend during evaluation.
-- Record behavior, measurements, patches, and license findings here.
+- Record behavior, measurements, patches, and license findings locally.
 
 ## Pre-MVP representative applications
 
