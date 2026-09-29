@@ -1,6 +1,6 @@
 # ADR-0001: Validate the system layer before choosing the product base
 
-- Status: Accepted
+- Status: Superseded by ADR-0002 on 2026-09-29
 - Date: 2026-09-20
 
 ## Context
@@ -27,4 +27,3 @@ Do not copy TypeTide source into this repository during the spike.
 Use TypeTide as the formal base only if it passes the compatibility, safety, privacy, performance, and maintainability checks in `docs/research/typetide-validation-plan.md`.
 
 If most of the system layer remains useful, create a transparent GitHub fork and keep MIT. If only isolated files are useful, retain their notices in a new repository. If the structure blocks Smart Scope or safe learning integration, implement the bridge cleanly in Swift.
-

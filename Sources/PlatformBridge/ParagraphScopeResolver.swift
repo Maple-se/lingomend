@@ -15,7 +15,8 @@ public struct ParagraphScopeResolver: Sendable {
         guard selected.location != NSNotFound,
               selected.location >= 0,
               selected.length >= 0,
-              NSMaxRange(selected) <= totalLength else {
+              selected.location <= totalLength,
+              selected.length <= totalLength - selected.location else {
             return nil
         }
 
@@ -28,7 +29,10 @@ public struct ParagraphScopeResolver: Sendable {
         }
 
         let trimmedWholeField = snapshot.text.trimmingCharacters(in: .whitespacesAndNewlines)
-        if totalLength <= wholeFieldThreshold, !trimmedWholeField.contains("\n\n") {
+        // A short multi-line editor is still a document. Only a genuinely
+        // single-line field is safe to treat as one complete thought.
+        if totalLength <= wholeFieldThreshold,
+           !snapshot.text.contains(where: { $0.isNewline }) {
             let range = source.range(of: trimmedWholeField)
             guard range.location != NSNotFound else { return nil }
             return ResolvedTextScope(

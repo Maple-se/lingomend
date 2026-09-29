@@ -8,9 +8,14 @@ LingoMend is a lightweight, system-wide AI English expression coach for non-nati
 
 ## Status
 
-LingoMend is in Stage 0: product validation and system-integration research. The current focus is validating a low-friction macOS workflow and deciding whether to build on the MIT-licensed TypeTide system layer or implement a clean native bridge.
+LingoMend is moving from a narrow Stage 0 system-integration spike into its
+macOS MVP. TypeTide is an isolated MIT-licensed reference, not the product
+base; LingoMend owns Smart Scope, safe replacement, and learning behavior.
 
-The isolated [TypeTide validation log](docs/research/typetide-validation-log.md) records the pinned upstream commit, build and test evidence, and the ten-application test matrix. No system-layer base decision has been made.
+The isolated [TypeTide validation log](docs/research/typetide-validation-log.md)
+records the pinned upstream commit and observed behavior. The
+[targeted-reuse decision](docs/adr/0002-targeted-reuse-and-mvp-gate.md) uses a
+small representative-app gate; ten-app coverage is a later compatibility task.
 
 No production-ready application is available yet.
 
@@ -34,11 +39,10 @@ No production-ready application is available yet.
 
 ## Repository roadmap
 
-1. Validate TypeTide in a disposable technical spike.
-2. Establish the system-layer decision gate.
-3. Build reusable Coach and Learning cores.
-4. Implement the macOS menu-bar shell and Smart Scope.
-5. Add expression memory only after the main input flow is reliable.
+1. Complete representative-app and safety checks on the isolated TypeTide experiment.
+2. Build LingoMend's macOS capture/review/replace loop with its own Smart Scope and safety gate.
+3. Add expression memory after the main input flow is reliable.
+4. Expand compatibility testing to the original ten-app matrix where apps are available.
 
 ## Development requirements
 

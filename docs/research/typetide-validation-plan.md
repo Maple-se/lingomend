@@ -2,14 +2,13 @@
 
 ## Timing
 
-Run this spike immediately after the initial LingoMend repository is published and before production work begins on Accessibility capture, global shortcuts, replacement, or the floating panel.
-
-Target duration: 5–7 focused development days.
+Run a short, isolated spike alongside LingoMend MVP foundations. ADR-0002
+narrows this plan: the goal is targeted reuse, not adoption of all TypeTide.
 
 The dated evidence and application matrix are in
 [`typetide-validation-log.md`](typetide-validation-log.md). Do not make the
-fork-versus-reimplementation decision until the matrix and safety gates are
-complete.
+targeted-reuse decision until the representative-app and safety checks are
+recorded. Unverified scenarios must remain open for LingoMend's own bridge.
 
 ## Isolation
 
@@ -18,7 +17,17 @@ complete.
 - Do not merge upstream source into LingoMend during evaluation.
 - Record behavior, measurements, patches, and license findings here.
 
-## Target applications
+## Pre-MVP representative applications
+
+1. TextEdit — native plain-text control
+2. Safari — web text area
+3. VS Code — editor-specific input stack
+
+If an app is unavailable, record why and choose an available app with a
+different text-input implementation. This is a sampling gate, not a
+compatibility-rate claim.
+
+## Post-MVP compatibility matrix
 
 1. TextEdit
 2. Safari
@@ -44,18 +53,23 @@ complete.
 - Respect an excluded-app list.
 - Avoid writing source text, model output, and credentials to logs.
 
-For every application, record the result and the exact failure mode. A passing
+For every representative application, record the result and exact failure mode. A passing
 unit test or a mocked editor test does not count as an application-level pass.
-Any wrong-field write, lost user clipboard change, or broken undo is a gate
-failure until fixed and retested.
+Any wrong-field write, lost user clipboard change, or broken undo disqualifies
+reuse of that TypeTide path. It does not block building a safer LingoMend path;
+the latter must pass equivalent tests before MVP release.
 
-## Performance budget
+## Post-MVP performance targets
 
 - Idle CPU: below 0.5% on the reference machine.
 - Idle resident memory: below 60 MB, excluding local models.
 - Installed size: below 30 MB, excluding local models.
 - Trigger to visible panel: P95 below 150 ms before model latency.
 - Scope resolution: P95 below 100 ms.
+
+These remain product targets, not conditions for beginning MVP development.
+The TypeTide experimental build already misses the size and memory targets;
+LingoMend's own build must be measured separately.
 
 ## Maintainability checks
 
@@ -66,16 +80,13 @@ failure until fixed and retested.
 - Upstream dependencies and their licenses are documented.
 - There is no mandatory telemetry or hosted relay.
 
-## Exit outcomes
+## Exit outcomes for each candidate technique
 
-### Formal fork
+- Reuse a small, reviewed MIT module with its provenance and notices.
+- Adapt an interaction or architecture idea without copying source.
+- Implement a clean native LingoMend module when safety or product behavior
+  requires a different design.
 
-Choose this when the majority of the system layer survives and upstream fixes remain useful.
-
-### New repository with attributed MIT modules
-
-Choose this when only a few isolated modules survive. Preserve per-file notices and record the exact commit in `THIRD_PARTY_NOTICES.md`.
-
-### Clean native implementation
-
-Choose this when Smart Scope, replacement safety, or module boundaries require substantial rewrites.
+A full-product fork is not the default exit. Ten-app and distribution-budget
+checks continue after the first MVP slice; they are not prerequisites for
+starting it.

@@ -2,17 +2,22 @@ import Foundation
 
 public struct TextSnapshot: Equatable, Sendable {
     public let applicationIdentifier: String
+    /// Stable identity of the focused editable element for this capture session.
+    /// The native bridge must not use an app identifier as a substitute.
+    public let focusedElementIdentifier: String
     public let text: String
     public let selectedRange: NSRange
     public let revisionToken: String
 
     public init(
         applicationIdentifier: String,
+        focusedElementIdentifier: String,
         text: String,
         selectedRange: NSRange,
         revisionToken: String
     ) {
         self.applicationIdentifier = applicationIdentifier
+        self.focusedElementIdentifier = focusedElementIdentifier
         self.text = text
         self.selectedRange = selectedRange
         self.revisionToken = revisionToken
@@ -48,4 +53,3 @@ public protocol SafeTextReplacing: Sendable {
         with replacement: String
     ) async throws
 }
-

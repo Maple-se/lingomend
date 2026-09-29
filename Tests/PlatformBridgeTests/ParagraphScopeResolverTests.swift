@@ -7,6 +7,7 @@ final class ParagraphScopeResolverTests: XCTestCase {
         let text = "First paragraph.\nSecond paragraph."
         let snapshot = TextSnapshot(
             applicationIdentifier: "test",
+            focusedElementIdentifier: "editor",
             text: text,
             selectedRange: NSRange(location: 17, length: 6),
             revisionToken: "1"
@@ -22,6 +23,7 @@ final class ParagraphScopeResolverTests: XCTestCase {
         let text = "I think 这个方法 is better."
         let snapshot = TextSnapshot(
             applicationIdentifier: "test",
+            focusedElementIdentifier: "editor",
             text: text,
             selectedRange: NSRange(location: (text as NSString).length, length: 0),
             revisionToken: "1"
@@ -40,6 +42,7 @@ final class ParagraphScopeResolverTests: XCTestCase {
         let location = ("\(first)\n  I think" as NSString).length
         let snapshot = TextSnapshot(
             applicationIdentifier: "test",
+            focusedElementIdentifier: "editor",
             text: text,
             selectedRange: NSRange(location: location, length: 0),
             revisionToken: "1"
@@ -50,5 +53,42 @@ final class ParagraphScopeResolverTests: XCTestCase {
         XCTAssertEqual(scope?.text, target.trimmingCharacters(in: .whitespaces))
         XCTAssertEqual(scope?.kind, .paragraphAtCaret)
     }
-}
 
+    func testShortMultiLineFieldUsesCurrentParagraph() {
+        let first = "Stage 0 synthetic text. under light-load conditions."
+        let second = "The second sentence stays unchanged."
+        let text = "\(first)\n\(second)"
+        let snapshot = TextSnapshot(
+            applicationIdentifier: "test",
+            focusedElementIdentifier: "editor",
+            text: text,
+            selectedRange: NSRange(location: 32, length: 0),
+            revisionToken: "1"
+        )
+
+        let scope = ParagraphScopeResolver().resolve(snapshot: snapshot)
+
+        XCTAssertEqual(scope?.text, first)
+        XCTAssertEqual(scope?.range, NSRange(location: 0, length: (first as NSString).length))
+        XCTAssertEqual(scope?.kind, .paragraphAtCaret)
+    }
+
+    func testShortMultiLineFieldUsesSecondParagraphAtCaret() {
+        let first = "First line."
+        let second = "Second line with 中文占位."
+        let text = "\(first)\n\(second)"
+        let location = ("\(first)\nSecond" as NSString).length
+        let snapshot = TextSnapshot(
+            applicationIdentifier: "test",
+            focusedElementIdentifier: "editor",
+            text: text,
+            selectedRange: NSRange(location: location, length: 0),
+            revisionToken: "1"
+        )
+
+        let scope = ParagraphScopeResolver().resolve(snapshot: snapshot)
+
+        XCTAssertEqual(scope?.text, second)
+        XCTAssertEqual(scope?.kind, .paragraphAtCaret)
+    }
+}
