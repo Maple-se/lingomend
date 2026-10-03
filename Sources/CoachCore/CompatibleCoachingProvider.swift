@@ -112,33 +112,7 @@ public struct CompatibleCoachingProvider: CoachingProvider {
     }
 
     public func suggest(_ request: CoachRequest) async throws -> CoachResponse {
-        try Task.checkCancellation()
-        let httpRequest = try makeRequest(request)
-        let result: CoachingHTTPResult
-        do { result = try await transport.send(httpRequest) }
-        catch is CancellationError { throw CancellationError() }
-        catch let error as CoachingProviderError { throw error }
-        catch let error as URLError {
-            if error.code == .cancelled { throw CancellationError() }
-            throw error.code == .timedOut ? CoachingProviderError.timedOut : .network
-        }
-        catch { throw CoachingProviderError.network }
-        try Task.checkCancellation()
-        switch result.statusCode {
-        case 200...299: break
-        case 401, 403: throw CoachingProviderError.unauthorized
-        case 429: throw CoachingProviderError.rateLimited
-        default: throw CoachingProviderError.httpStatus(result.statusCode)
-        }
-        guard result.data.count <= 1_048_576 else { throw CoachingProviderError.responseTooLarge }
-        let envelope: CompletionEnvelope
-        do { envelope = try JSONDecoder().decode(CompletionEnvelope.self, from: result.data) }
-        catch { throw CoachingProviderError.invalidResponse }
-        guard let choice = envelope.choices.first else { throw CoachingProviderError.invalidResponse }
-        if let refusal = choice.message.refusal, !refusal.isEmpty { throw CoachingProviderError.refused }
-        guard choice.finishReason == "stop" else { throw CoachingProviderError.incompleteResponse }
-        guard let content = choice.message.content, let data = content.data(using: .utf8),
-              data.count <= 262_144 else { throw CoachingProviderError.invalidResponse }
+        let data = try await ChatCompletionClient(transport: transport).content(for: makeRequest(request))
         let output: CoachingOutput
         do { output = try JSONDecoder().decode(CoachingOutput.self, from: data) }
         catch { throw CoachingProviderError.invalidResponse }
@@ -222,16 +196,6 @@ public struct CompatibleCoachingProvider: CoachingProvider {
                     ]]
                 ]]
     }
-}
-
-private struct CompletionEnvelope: Decodable {
-    struct Choice: Decodable {
-        struct Message: Decodable { let content: String?; let refusal: String? }
-        let message: Message
-        let finishReason: String
-        enum CodingKeys: String, CodingKey { case message; case finishReason = "finish_reason" }
-    }
-    let choices: [Choice]
 }
 
 private struct CoachingOutput: Decodable {
