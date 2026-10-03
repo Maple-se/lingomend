@@ -4,6 +4,23 @@ import LearningCore
 import XCTest
 
 final class LocalLearningJournalTests: XCTestCase {
+    func testDeduplicatesAndDoesNotMarkAcceptedTextAsIndependent() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("LingoMendJournalTest-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let journal = LocalLearningJournal(fileURL: directory.appendingPathComponent("learning.json"))
+        let point = LearningPoint(source: "轻载条件下", target: "under light-load conditions",
+                                  explanation: "测试说明", category: .terminology)
+        let first = try await journal.save(point)
+        let again = try await journal.save(point)
+        XCTAssertEqual(first.id, again.id)
+        let accepted = "It works under light-load conditions."
+        try await journal.recordAssistedUse(in: accepted)
+        let reused = try await journal.observeIndependentUse(in: accepted, at: Date().addingTimeInterval(86_400))
+        XCTAssertTrue(reused.isEmpty)
+        try await journal.remove(expressionID: first.id)
+        let remaining = try await journal.expressions()
+        XCTAssertTrue(remaining.isEmpty)
+    }
     func testExplicitSaveAndIndependentUsePersistWithoutFullDraft() async throws {
         let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent("LingoMendJournalTest-\(UUID().uuidString)")

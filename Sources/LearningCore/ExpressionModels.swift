@@ -15,6 +15,7 @@ public struct Expression: Codable, Equatable, Identifiable, Sendable {
     public let targetPatterns: [String]
     public let category: LearningCategory
     public let shortContext: String?
+    public let explanation: String?
     public let createdAt: Date
     public var state: ExpressionState
     public var confidence: Double
@@ -26,6 +27,7 @@ public struct Expression: Codable, Equatable, Identifiable, Sendable {
         targetPatterns: [String] = [],
         category: LearningCategory,
         shortContext: String? = nil,
+        explanation: String? = nil,
         createdAt: Date = Date(),
         state: ExpressionState = .new,
         confidence: Double = 0
@@ -36,6 +38,7 @@ public struct Expression: Codable, Equatable, Identifiable, Sendable {
         self.targetPatterns = targetPatterns
         self.category = category
         self.shortContext = shortContext
+        self.explanation = explanation
         self.createdAt = createdAt
         self.state = state
         self.confidence = min(max(confidence, 0), 1)
@@ -47,7 +50,8 @@ public struct Expression: Codable, Equatable, Identifiable, Sendable {
             canonicalTarget: learningPoint.target,
             targetPatterns: learningPoint.acceptableVariants,
             category: learningPoint.category,
-            shortContext: shortContext
+            shortContext: shortContext,
+            explanation: learningPoint.explanation
         )
     }
 }
@@ -86,4 +90,3 @@ public struct UsageEvidence: Codable, Equatable, Identifiable, Sendable {
         self.contextHash = contextHash
     }
 }
-
