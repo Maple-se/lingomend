@@ -41,7 +41,7 @@ public struct CapturePreviewService: Sendable {
             throw CapturePreviewError.noUsableScope
         }
         let response = try await provider.suggest(CoachRequest(sourceText: scope.text))
-        try validator.validate(response)
+        try validator.validate(response, sourceText: scope.text)
         return CapturePreviewSession(snapshot: snapshot, scope: scope, response: response)
     }
 }
