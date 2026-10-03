@@ -4,18 +4,64 @@ import LearningCore
 import SwiftUI
 
 @MainActor
-final class ReviewPanel {
+final class ReviewPanel: NSObject, NSWindowDelegate {
     private var panel: NSPanel?
+    private var onClose: (@MainActor () -> Void)?
+
+    func close() { panel?.close() }
+    func windowWillClose(_ notification: Notification) {
+        panel = nil
+        let callback = onClose; onClose = nil; callback?()
+    }
+
+    func showLoading(modeLabel: String, onClose: @escaping @MainActor () -> Void) {
+        close()
+        self.onClose = onClose
+        let panel = preparePanel()
+        panel.contentView = NSHostingView(rootView: VStack(spacing: 16) {
+            ProgressView()
+            Text("正在生成按需解释…")
+            Text(modeLabel).font(.caption).foregroundStyle(.secondary)
+            Button("取消") { [weak self] in self?.close() }
+        }.frame(width: 540, height: 400))
+        panel.orderFrontRegardless()
+    }
+
+    func showFailure(_ message: String) {
+        let panel = preparePanel()
+        panel.contentView = NSHostingView(rootView: VStack(spacing: 16) {
+            Text(message).padding()
+            Text("原文未被修改；不会自动重试。候选和解释仍需你判断。").font(.caption)
+            Button("关闭") { [weak self] in self?.close() }
+        }.frame(width: 540, height: 400))
+        panel.orderFrontRegardless()
+    }
 
     func show(
         source: String,
         response: CoachResponse,
         independentUses: [LearningCore.Expression] = [],
         learningUnavailable: Bool = false,
+        modeLabel: String = "本地演示 · 不发送文本到网络",
         onSave: (@MainActor (LearningPoint) async throws -> Void)? = nil
     ) {
-        panel?.close()
+        let newPanel = preparePanel()
+        newPanel.contentView = NSHostingView(
+            rootView: ReviewView(
+                source: source, response: response, independentUses: independentUses,
+                learningUnavailable: learningUnavailable, modeLabel: modeLabel, onSave: onSave,
+                onCopy: { [weak self] in
+                    NSPasteboard.general.clearContents()
+                    NSPasteboard.general.setString(response.naturalText, forType: .string)
+                    self?.close()
+                }, onClose: { [weak self] in self?.close() }
+            )
+        )
+        newPanel.orderFrontRegardless()
+    }
 
+    private func preparePanel() -> NSPanel {
+        if let panel { return panel }
         let newPanel = NSPanel(
             contentRect: NSRect(x: 0, y: 0, width: 540, height: 400),
             styleMask: [.titled, .closable, .nonactivatingPanel],
@@ -27,24 +73,10 @@ final class ReviewPanel {
         newPanel.isFloatingPanel = true
         newPanel.hidesOnDeactivate = false
         newPanel.collectionBehavior = [.moveToActiveSpace, .fullScreenAuxiliary]
-        newPanel.contentView = NSHostingView(
-            rootView: ReviewView(
-                source: source,
-                response: response,
-                independentUses: independentUses,
-                learningUnavailable: learningUnavailable,
-                onSave: onSave,
-                onCopy: { [weak self] in
-                    NSPasteboard.general.clearContents()
-                    NSPasteboard.general.setString(response.naturalText, forType: .string)
-                    self?.panel?.close()
-                },
-                onClose: { [weak self] in self?.panel?.close() }
-            )
-        )
+        newPanel.isReleasedWhenClosed = false; newPanel.delegate = self
         newPanel.center()
-        newPanel.orderFrontRegardless()
         panel = newPanel
+        return newPanel
     }
 }
 
@@ -53,6 +85,7 @@ private struct ReviewView: View {
     let response: CoachResponse
     let independentUses: [LearningCore.Expression]
     let learningUnavailable: Bool
+    let modeLabel: String
     let onSave: (@MainActor (LearningPoint) async throws -> Void)?
     let onCopy: () -> Void
     let onClose: () -> Void
@@ -106,7 +139,7 @@ private struct ReviewView: View {
 
             Spacer(minLength: 0)
             HStack {
-                Text("本地演示 · 不发送文本到网络")
+                Text(modeLabel)
                     .font(.caption)
                     .foregroundStyle(.secondary)
                 Spacer()

@@ -44,6 +44,10 @@ let package = Package(
         .testTarget(
             name: "MVPFlowTests",
             dependencies: ["CoachCore", "MVPFlow", "PlatformBridge"]
+        ),
+        .testTarget(
+            name: "LingoMendAppTests",
+            dependencies: ["LingoMendApp", "CoachCore"]
         )
     ]
 )

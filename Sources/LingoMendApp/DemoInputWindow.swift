@@ -3,7 +3,7 @@ import CoachCore
 import MVPFlow
 import PlatformBridge
 
-/// Native local editor: no Accessibility or network, native editing and undo.
+/// Native editor: no Accessibility; networking is opt-in via shared settings.
 @MainActor
 final class DemoInputWindow: NSObject, NSTextViewDelegate, NSWindowDelegate {
     private var window: NSWindow?
@@ -11,11 +11,21 @@ final class DemoInputWindow: NSObject, NSTextViewDelegate, NSWindowDelegate {
     private var task: Task<Void, Never>?
     private var proposal: InlineProposal?
     private let candidatePanel = InlineCandidatePanel()
-    private let reviewPanel = ReviewPanel()
+    private let learning = LearningPresenter()
+    private var service = ExpressionService(preferences: AppPreferences())
     private let status = NSTextField(labelWithString: "本地固定样例 · 不联网 · 无需辅助功能权限")
     private var epoch = UUID()
 
-    func show() {
+    func configure(service: ExpressionService) {
+        suspend(); self.service = service
+        status.stringValue = "\(service.modeLabel) · 无需辅助功能权限"
+        if window?.isKeyWindow == true { schedule() }
+    }
+
+    func suspend() { invalidate(); learning.cancel() }
+
+    func show(service: ExpressionService) {
+        configure(service: service)
         if let window {
             window.makeKeyAndOrderFront(nil); NSApp.activate(ignoringOtherApps: true)
             schedule(); return
@@ -70,7 +80,7 @@ final class DemoInputWindow: NSObject, NSTextViewDelegate, NSWindowDelegate {
     func textViewDidChangeSelection(_ notification: Notification) { schedule() }
     func windowDidResignKey(_ notification: Notification) { invalidate() }
     func windowDidBecomeKey(_ notification: Notification) { schedule() }
-    func windowWillClose(_ notification: Notification) { invalidate() }
+    func windowWillClose(_ notification: Notification) { suspend() }
 
     func accept() {
         guard let proposal, let editor, window?.isKeyWindow == true,
@@ -90,7 +100,7 @@ final class DemoInputWindow: NSObject, NSTextViewDelegate, NSWindowDelegate {
     func learn() {
         guard let proposal else { return }
         invalidate()
-        reviewPanel.show(source: proposal.placeholder.context.text, response: proposal.response)
+        learning.show(proposal, service: service)
     }
     func dismiss() { invalidate() }
     var hasCandidate: Bool { proposal != nil && window?.isKeyWindow == true }
@@ -114,19 +124,30 @@ final class DemoInputWindow: NSObject, NSTextViewDelegate, NSWindowDelegate {
                   let snapshot = self.snapshot(),
                   let placeholder = InlinePlaceholderResolver().resolve(snapshot) else { return }
             do {
-                let response = try await DemoCoachingProvider().suggest(CoachRequest(sourceText: placeholder.context.text))
+                guard let request = InlineProposal.request(for: placeholder, context: self.service.preferences.context,
+                    correctionLevel: self.service.preferences.correctionLevel) else { return }
+                let service = self.service
+                self.status.stringValue = "\(service.modeLabel) · 生成候选…"
+                guard let replacement = try await service.candidate(request) else {
+                    if self.epoch == token { self.status.stringValue = "\(service.modeLabel) · 暂无候选，请继续写作" }
+                    return
+                }
+                try Task.checkCancellation()
                 guard self.epoch == token, self.snapshot() == snapshot,
-                      let proposal = InlineProposal(snapshot: snapshot, placeholder: placeholder, response: response) else { return }
+                      !editor.hasMarkedText(), self.window?.isKeyWindow == true,
+                      let proposal = InlineProposal(snapshot: snapshot, placeholder: placeholder, replacement: replacement) else { return }
                 let bounds = editor.firstRect(forCharacterRange: snapshot.selectedRange, actualRange: nil)
                 guard bounds.height > 0 else { return }
                 self.proposal = proposal
+                self.status.stringValue = "\(service.modeLabel) · 候选仅填补中文占位；请判断含义后接受"
                 let desktopTop = NSScreen.screens.first?.frame.maxY ?? 0
                 let anchor = CGRect(x: bounds.minX, y: desktopTop - bounds.maxY, width: bounds.width, height: bounds.height)
                 self.candidatePanel.show(text: proposal.replacement, anchor: anchor, canAccept: true,
                     onAccept: { [weak self] in self?.accept() },
                     onLearn: { [weak self] in self?.learn() }, onCopy: {},
                     onDismiss: { [weak self] in self?.dismiss() })
-            } catch { self.status.stringValue = "本地样例暂不可用" }
+            } catch is CancellationError { }
+            catch { if self.epoch == token { self.status.stringValue = providerMessage(error) } }
         }
     }
 }

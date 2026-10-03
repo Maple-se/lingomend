@@ -9,7 +9,7 @@ speakers. Keep your existing input method, leave Chinese placeholders while
 writing English, and accept a short candidate near the caret. Explanations
 open only when you choose to learn, not before every edit.
 
-## Status: Stage 1 experience build
+## Status: Stage 2 API experience build (0.2.0)
 
 The local companion interaction is implemented. This is an early experience
 build, not a production release:
@@ -17,13 +17,26 @@ build, not a production release:
 - Native input experience editor; no Accessibility permission required.
 - Non-activating, caret-adjacent candidates and deliberate keyboard acceptance.
 - Optional, allowlisted AX notification observation for TextEdit and Safari.
-- Only the fixed example `轻载条件下 → under light-load conditions` works at
-  this stage; real-provider settings are disabled and the app does not network.
+- DeepSeek Chat Completions with a configurable endpoint/model and a BYOK
+  credential stored in macOS Keychain. Networking is off by default.
+- Short inline candidates and separately requested learning explanations, with
+  JSON validation, non-thinking mode, hard deadlines and cancellation.
+- Requests include only the Chinese placeholder and up to 200 UTF-16 units on
+  each side within its resolved scope, not arbitrary full fields or history.
+  A short sentence/field may fit entirely within that bounded context.
+- Without networking, only the fixed example
+  `轻载条件下 → under light-load conditions` is supported. API failures never
+  silently fall back to that example.
 - Cross-app acceptance is experimental and off by default. External IME
   composition, notification coverage, native undo and app compatibility remain
   unverified. The local editor uses native text editing/undo.
-- Model adapter, text diff and local learning-data foundations are present,
-  but are not yet a complete model/learning product.
+- Voluntary local expression saving is available in the learning panel. Library,
+  independent-use evidence UI and performance/compatibility work remain later stages.
+
+Real paid requests, candidate quality and runtime Keychain/UI behaviour must be
+tested by users with their own credentials. Automated tests use synthetic
+in-memory responses, not real API keys. This slice supports Chinese expression
+gaps; arbitrary English polishing is not yet an automatic inline feature.
 
 TypeTide is an isolated MIT reference, not the product base. LingoMend owns its
 Smart Scope and companion UX. Private validation notes are not published.
@@ -44,8 +57,13 @@ Pause after `This works 轻载条件下.` to see a candidate. **Control-Option-R
 accepts it; **Control-Option-K** opens learning; **Control-Option-Period**
 dismisses it. Ordinary Tab/Return and IME composition keys are not intercepted.
 
-See the [Stage 1 experience steps](docs/stage-1-experience.md) for local and
-optional TextEdit testing. Rebuilt ad-hoc signed apps can require manual
+To use real suggestions, open **LM → 设置**, keep the DeepSeek preset,
+enter your key privately, and click **测试连接（合成文本）**. Then enable
+**使用配置的模型服务** and save. The explicit test can make one paid request
+even while normal networking is disabled. It does not read other apps.
+
+See the [Stage 2 API experience steps](docs/stage-2-api-experience.md) for setup
+and a short user-driven test. Rebuilt ad-hoc signed apps can require manual
 Accessibility reauthorization; no development certificate is included.
 
 ## Principles and architecture
@@ -57,7 +75,10 @@ Accessibility reauthorization; no development certificate is included.
 - No key logging, clipboard-based capture, or full-draft logs/analytics.
 - Local expression cards live under Application Support/LingoMend; full drafts
   are not retained. Saving is voluntary; assisted reuse is not mastery evidence.
-- Future model credentials use the OS Keychain; model/settings values are not secrets.
+- Model credentials use the OS Keychain, isolated by complete normalized endpoint.
+  Switching endpoint does not reuse another endpoint's key. No embedded key or relay.
+- A successful JSON check is not proof of semantic correctness; users decide
+  whether to accept. External service retention is governed by that provider.
 
 ## Delivery
 
@@ -65,8 +86,8 @@ See the [staged development plan](docs/development-stages.md). Each stage ends
 with tests/build, Conventional Commits and a normal remote push, a report and
 user test steps. Work stops for feedback before proceeding to the next stage.
 
-Next: real suggestions and safe acceptance; then on-demand learning and reuse
-evidence; then performance, compatibility and release packaging.
+Next: user feedback on real suggestions, latency and native input/undo; remaining
+safe-acceptance compatibility; then learning library/reuse evidence and release work.
 
 ## License
 

@@ -20,9 +20,8 @@ enum LingoMendApp {
 private final class LingoMendDelegate: NSObject, NSApplicationDelegate {
     private let reader = MacOSAccessibilityTextReader()
     private let observer = MacOSFocusedTextObserver()
-    private let provider = DemoCoachingProvider() // Stage 1 is strictly local.
-    private let learningJournal = LocalLearningJournal()
-    private let reviewPanel = ReviewPanel()
+    private var service = ExpressionService(preferences: AppPreferences.load())
+    private let learning = LearningPresenter()
     private let candidatePanel = InlineCandidatePanel()
     private let settingsWindow = SettingsWindow()
     private let demoWindow = DemoInputWindow()
@@ -39,11 +38,10 @@ private final class LingoMendDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
-        preferences.networkEnabled = false
         let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         item.button?.title = "LM"
         let menu = NSMenu()
-        let status = NSMenuItem(title: "阶段 1 · 本地候选，不联网", action: nil, keyEquivalent: "")
+        let status = NSMenuItem(title: service.modeLabel, action: nil, keyEquivalent: "")
         status.isEnabled = false; statusLine = status; menu.addItem(status)
         add("打开输入体验", action: #selector(showInputExperience), to: menu)
         add("设置…", action: #selector(showSettings), to: menu)
@@ -86,26 +84,31 @@ private final class LingoMendDelegate: NSObject, NSApplicationDelegate {
         _ = AXIsProcessTrustedWithOptions(["AXTrustedCheckOptionPrompt": true] as CFDictionary)
     }
     @objc private func quitApp() { NSApp.terminate(nil) }
-    @objc private func showInputExperience() { invalidate(); demoWindow.show() }
+    @objc private func showInputExperience() { invalidate(); demoWindow.show(service: service) }
     @objc private func showSettings() {
         invalidate()
+        learning.cancel()
+        demoWindow.suspend()
         settingsWindow.show(preferences: preferences) { [weak self] updated in
-            self?.preferences = updated
-            self?.configureObserver()
+            guard let self else { return }
+            preferences = updated
+            service = ExpressionService(preferences: updated)
+            demoWindow.configure(service: service)
+            configureObserver()
         }
     }
     @objc private func pauseImmersion() {
         preferences.immersiveEnabled = false
         try? preferences.persist()
         configureObserver()
-        statusLine?.title = "伴随已暂停 · 仍可打开本地输入体验"
+        statusLine?.title = "伴随已暂停 · 输入体验：\(service.modeLabel)"
     }
 
     private func configureObserver() {
         invalidate()
         reader.allowedApplications = preferences.allowedApplications
         observer.configure(enabled: preferences.immersiveEnabled, allowedApplications: preferences.allowedApplications)
-        statusLine?.title = preferences.immersiveEnabled ? "伴随已启用 · 仅勾选应用 · 本地样例" : "阶段 1 · 伴随默认关闭 · 本地样例"
+        statusLine?.title = "\(service.modeLabel) · \(preferences.immersiveEnabled ? "伴随已启用" : "伴随关闭")"
     }
 
     private func invalidate() {
@@ -140,13 +143,19 @@ private final class LingoMendDelegate: NSObject, NSApplicationDelegate {
                     guard self.epoch == token, try await self.reader.readFocusedText() == snapshot else { return }
                     self.lastAutomaticRequest = Date()
                 }
-                let response = try await self.provider.suggest(CoachRequest(sourceText: placeholder.context.text,
-                    context: self.preferences.context, correctionLevel: self.preferences.correctionLevel))
+                guard let request = InlineProposal.request(for: placeholder, context: self.preferences.context,
+                    correctionLevel: self.preferences.correctionLevel) else { return }
+                let service = self.service
+                guard let replacement = try await service.candidate(request) else {
+                    if self.epoch == token { self.statusLine?.title = "\(service.modeLabel) · 此表达暂无可靠候选" }
+                    return
+                }
                 try Task.checkCancellation()
                 guard self.epoch == token, try await self.reader.readFocusedText() == snapshot,
-                      let proposal = InlineProposal(snapshot: snapshot, placeholder: placeholder, response: response),
+                      let proposal = InlineProposal(snapshot: snapshot, placeholder: placeholder, replacement: replacement),
                       let anchor = try await self.reader.caretBounds(for: snapshot), self.epoch == token else { return }
                 self.proposal = proposal
+                self.statusLine?.title = service.modeLabel
                 self.candidatePanel.show(text: proposal.replacement, anchor: anchor,
                     canAccept: self.preferences.experimentalAcceptance,
                     onAccept: { [weak self] in self?.accept() }, onLearn: { [weak self] in self?.learn() },
@@ -156,7 +165,9 @@ private final class LingoMendDelegate: NSObject, NSApplicationDelegate {
             catch AccessibilityCaptureError.permissionRequired {
                 if !automatic { self.statusLine?.title = "需要辅助功能权限；从 LM 菜单手动开启" }
             } catch {
-                if !automatic { self.statusLine?.title = "此输入框暂不支持候选读取或定位；原文未修改" }
+                guard self.epoch == token else { return }
+                self.statusLine?.title = error is CoachingProviderError || error is CredentialError
+                    ? providerMessage(error) : "此输入框暂不支持候选读取或定位；原文未修改"
             }
         }
     }
@@ -204,10 +215,6 @@ private final class LingoMendDelegate: NSObject, NSApplicationDelegate {
     private func learn() {
         guard let proposal else { return }
         dismiss()
-        let save: (@MainActor (LearningPoint) async throws -> Void)?
-        if preferences.learningEnabled {
-            save = { [learningJournal] point in _ = try await learningJournal.save(point) }
-        } else { save = nil }
-        reviewPanel.show(source: proposal.placeholder.context.text, response: proposal.response, onSave: save)
+        learning.show(proposal, service: service)
     }
 }

@@ -3,11 +3,11 @@ import CryptoKit
 import Foundation
 import Security
 
-struct AppPreferences: Codable {
+struct AppPreferences: Codable, Equatable, Sendable {
     var immersiveEnabled = false
     var allowedApplications: Set<String> = []
     var networkEnabled = false
-    var provider = ProviderConfiguration()
+    var provider = DeepSeekExpressionProvider.preset
     var context = WritingContext.general
     var correctionLevel = CorrectionLevel.correct
     var experimentalAcceptance = false
@@ -15,9 +15,19 @@ struct AppPreferences: Codable {
     var statisticsEnabled = false
 
     static func load() -> Self {
-        guard let data = UserDefaults.standard.data(forKey: "LingoMend.preferences.v1"),
-              let preferences = try? JSONDecoder().decode(Self.self, from: data) else { return Self() }
-        return preferences
+        guard let data = UserDefaults.standard.data(forKey: "LingoMend.preferences.v1") else { return Self() }
+        return decoded(data)
+    }
+
+    static func decoded(_ data: Data) -> Self {
+        guard let preferences = try? JSONDecoder().decode(Self.self, from: data) else { return Self() }
+        var migrated = preferences
+        // Stage 1 never enabled networking; replace its empty placeholder preset only.
+        if migrated.provider.model.isEmpty {
+            migrated.provider = DeepSeekExpressionProvider.preset
+            migrated.networkEnabled = false
+        }
+        return migrated
     }
 
     func persist() throws {
@@ -33,10 +43,13 @@ enum ProviderCredentials {
     private static let service = "com.maplese.lingomend.provider"
 
     private static func query(for configuration: ProviderConfiguration) throws -> [String: Any] {
-        let endpoint = try configuration.endpoint().absoluteString
-        let account = SHA256.hash(data: Data(endpoint.utf8)).map { String(format: "%02x", $0) }.joined()
         return [kSecClass as String: kSecClassGenericPassword,
-                kSecAttrService as String: service, kSecAttrAccount as String: account]
+                kSecAttrService as String: service, kSecAttrAccount as String: try account(for: configuration)]
+    }
+
+    static func account(for configuration: ProviderConfiguration) throws -> String {
+        let endpoint = try configuration.endpoint().absoluteString
+        return SHA256.hash(data: Data(endpoint.utf8)).map { String(format: "%02x", $0) }.joined()
     }
 
     static func read(for configuration: ProviderConfiguration) throws -> String {
@@ -52,6 +65,8 @@ enum ProviderCredentials {
     }
 
     static func save(_ key: String, for configuration: ProviderConfiguration) throws {
+        guard !key.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+              !key.contains(where: { $0.isNewline }) else { throw CoachingProviderError.invalidConfiguration }
         let query = try query(for: configuration)
         let data = Data(key.utf8)
         let status = SecItemUpdate(query as CFDictionary, [kSecValueData as String: data] as CFDictionary)
@@ -70,6 +85,7 @@ enum ProviderCredentials {
 }
 
 func providerMessage(_ error: Error) -> String {
+    if error is CredentialError { return "钥匙串不可用；请允许访问或重新填写此地址的密钥。" }
     guard let error = error as? CoachingProviderError else { return "服务或本地数据暂不可用；请检查设置。" }
     switch error {
     case .invalidConfiguration, .insecureEndpoint: return "请配置模型和安全的服务地址；仅本机服务允许 HTTP。"
@@ -78,6 +94,7 @@ func providerMessage(_ error: Error) -> String {
     case .timedOut, .network: return "暂时无法连接服务；输入未被修改。"
     case .refused: return "服务未提供可用建议。"
     case .inputTooLarge, .responseTooLarge: return "内容超过处理上限；请缩短文本。"
+    case .httpStatus(402): return "服务余额不足；请检查 DeepSeek 账户余额。"
     case .httpStatus(let status): return "服务返回 HTTP \(status)；请检查模型与输出格式。"
     default: return "建议格式不完整或未通过检查；未应用到原文。"
     }
