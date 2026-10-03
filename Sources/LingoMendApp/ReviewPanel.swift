@@ -22,7 +22,7 @@ final class ReviewPanel {
             backing: .buffered,
             defer: false
         )
-        newPanel.title = "LingoMend · 预览"
+        newPanel.title = "LingoMend · 按需学习"
         newPanel.level = .floating
         newPanel.isFloatingPanel = true
         newPanel.hidesOnDeactivate = false
@@ -127,8 +127,6 @@ private struct ReviewView: View {
                     }
                     .disabled(saved)
                 }
-                Button("替换（待安全验证）") {}
-                    .disabled(true)
             }
         }
         .padding(20)
@@ -143,4 +141,5 @@ private struct ReviewView: View {
         case .mastered: "已掌握"
         }
     }
+
 }

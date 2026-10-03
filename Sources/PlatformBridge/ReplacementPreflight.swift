@@ -22,6 +22,16 @@ public struct ReplacementPreflight: Sendable {
         current: TextSnapshot,
         scope: ResolvedTextScope
     ) -> ReplacementRefusal? {
+        if let refusal = rangeRefusal(original: original, current: current, range: scope.range, source: scope.text) {
+            return refusal
+        }
+        guard resolver.resolve(snapshot: original) == scope else { return .invalidScope }
+        return nil
+    }
+
+    /// Used for a precise inline placeholder, which is smaller than its paragraph.
+    public func rangeRefusal(original: TextSnapshot, current: TextSnapshot,
+                             range: NSRange, source: String) -> ReplacementRefusal? {
         guard !original.applicationIdentifier.isEmpty,
               !original.focusedElementIdentifier.isEmpty,
               !original.revisionToken.isEmpty,
@@ -45,20 +55,15 @@ public struct ReplacementPreflight: Sendable {
             return .selectionChanged
         }
 
-        let source = original.text as NSString
-        guard scope.range.location != NSNotFound,
-              scope.range.location >= 0,
-              scope.range.length > 0,
-              scope.range.location <= source.length,
-              scope.range.length <= source.length - scope.range.location,
-              source.substring(with: scope.range) == scope.text else {
+        let fullText = original.text as NSString
+        guard range.location != NSNotFound,
+              range.location >= 0,
+              range.length > 0,
+              range.location <= fullText.length,
+              range.length <= fullText.length - range.location,
+              fullText.substring(with: range) == source else {
             return .invalidScope
         }
-
-        guard resolver.resolve(snapshot: original) == scope else {
-            return .invalidScope
-        }
-
         return nil
     }
 }
