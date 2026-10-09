@@ -30,13 +30,15 @@ private struct SettingsView: View {
     var body: some View {
         ScrollView {
             Form {
-                Section("按需表达帮助 · TextEdit T1") {
-                    Text("后台安静运行。在 TextEdit 按 ⌃⌥L：无选区读取当前句，有选区用所在句理解并限制在选区内。当前只预览建议和变化，原文保持不变。")
+                Section("按需表达帮助 · TextEdit T2") {
+                    Text("后台安静运行。在 TextEdit 按 ⌃⌥L：无选区读取当前句，有选区用所在句理解并限制在选区内。先看建议和变化，明确接受才修改原文。")
                         .font(.caption).foregroundStyle(.secondary)
                     appToggle("TextEdit", id: "com.apple.TextEdit")
-                    Text("⌃⌥. 收起。输入或焦点变化使候选失效。保留现有输入法与普通输入键。")
+                    Text("⌃⌥↩ 接受；Esc / ⌃⌥. 取消。在 TextEdit 用 ⌘Z 原生撤销。输入或焦点变化使候选失效；不接管普通 Return、Tab 或输入法组词键。")
                         .font(.caption)
-                    Text("安全接受与撤销在 T2 接入；按需学习在 T3 接入。先完成 TextEdit 的基本流程，再扩展其他应用。")
+                    Text("接受时临时借用系统剪贴板执行一次原生粘贴，保存原内容并在仍属本次操作时恢复；检测到新复制内容则保留它。无法保存剪贴板或保持格式时拒绝粘贴。剪贴板历史工具可能记录临时内容。")
+                        .font(.caption).foregroundStyle(.secondary)
+                    Text("本轮支持字体、字号、粗体、斜体、颜色与下划线等基础样式；附件、链接及复杂布局不在支持范围。真实 TextEdit 的写回、撤销和格式保持需试用验收。按需学习在 T3 接入。")
                         .font(.caption).foregroundStyle(.secondary)
                 }
                 Section("建议服务") {

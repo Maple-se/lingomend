@@ -40,6 +40,11 @@ public final class MacOSAccessibilityTextReader: FocusedTextReading, SafeTextRep
     public init() {}
 
     public func readFocusedText() async throws -> TextSnapshot {
+        try captureFocusedText()
+    }
+
+    // Synchronous form for a final validation and addressed paste with no suspension in between.
+    func captureFocusedText() throws -> TextSnapshot {
         guard AXIsProcessTrusted() else {
             throw AccessibilityCaptureError.permissionRequired
         }
@@ -153,6 +158,8 @@ public final class MacOSAccessibilityTextReader: FocusedTextReading, SafeTextRep
             revisionToken: revisionToken
         )
     }
+
+    var capturedElement: AXUIElement? { previousElement }
 
     /// Quartz screen coordinates; the UI converts to AppKit coordinates.
     public func caretBounds(for original: TextSnapshot) async throws -> CGRect? {

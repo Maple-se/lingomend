@@ -3,19 +3,25 @@ import CoachCore
 import MVPFlow
 import SwiftUI
 
+private final class NonActivatingSentencePanel: NSPanel {
+    override var canBecomeKey: Bool { false }
+    override var canBecomeMain: Bool { false }
+}
+
 @MainActor
 final class SentenceCandidatePanel {
     private var panel: NSPanel?
     func hide() { panel?.orderOut(nil) }
 
-    func show(_ proposal: SentenceProposal, anchor: CGRect, onDismiss: @escaping @MainActor () -> Void) {
+    func show(_ proposal: SentenceProposal, anchor: CGRect, onAccept: @escaping @MainActor () -> Void,
+              onDismiss: @escaping @MainActor () -> Void) {
         let width: CGFloat = 450, height: CGFloat = 240
-        let panel = self.panel ?? NSPanel(contentRect: NSRect(x: 0, y: 0, width: width, height: height),
+        let panel = self.panel ?? NonActivatingSentencePanel(contentRect: NSRect(x: 0, y: 0, width: width, height: height),
             styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
         panel.level = .floating; panel.isFloatingPanel = true; panel.hidesOnDeactivate = false
         panel.hasShadow = true; panel.isOpaque = false; panel.backgroundColor = .clear
         panel.collectionBehavior = [.moveToActiveSpace, .fullScreenAuxiliary]
-        panel.contentView = NSHostingView(rootView: SentenceCandidateView(proposal: proposal, onDismiss: onDismiss))
+        panel.contentView = NSHostingView(rootView: SentenceCandidateView(proposal: proposal, onAccept: onAccept, onDismiss: onDismiss))
         let top = NSScreen.screens.first?.frame.maxY ?? 0
         let caret = NSRect(x: anchor.minX, y: top - anchor.maxY, width: anchor.width, height: anchor.height)
         let area = (NSScreen.screens.first { $0.frame.intersects(caret) } ?? NSScreen.main)?.visibleFrame
@@ -31,6 +37,7 @@ final class SentenceCandidatePanel {
 
 private struct SentenceCandidateView: View {
     let proposal: SentenceProposal
+    let onAccept: () -> Void
     let onDismiss: () -> Void
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -54,9 +61,12 @@ private struct SentenceCandidateView: View {
                 }.frame(maxWidth: .infinity, alignment: .leading)
             }
             HStack {
-                Text("T1 只读建议 · 接受与学习将在后续阶段接入").font(.system(size: 10)).foregroundStyle(.secondary)
+                Text("明确接受才写回 · ⌘Z 原生撤销").font(.system(size: 10)).foregroundStyle(.secondary)
                 Spacer()
-                Button("收起 ⌃⌥.", action: onDismiss).buttonStyle(.plain).font(.caption)
+                Button("取消", action: onDismiss).buttonStyle(.plain).font(.caption)
+                if proposal.advice.status == .suggest {
+                    Button("接受 ⌃⌥↩", action: onAccept).buttonStyle(.borderedProminent).font(.caption)
+                }
             }
         }.padding(12).frame(width: 450, height: 240)
             .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12))

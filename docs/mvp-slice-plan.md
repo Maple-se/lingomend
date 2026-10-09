@@ -13,7 +13,9 @@ while making necessary English corrections. Learning is an on-demand branch.
 - T3: short explanations, post-acceptance review and voluntary local expression cards.
 - T4: TextEdit feedback convergence, followed by wider compatibility and release work.
 
-Experience steps: [TextEdit T1](textedit-t1-experience.md).
+Current delivery: T2 0.4.0; actual TextEdit acceptance is pending user feedback.
+Experience steps: [TextEdit T2](textedit-t2-experience.md).
+Native paste and scoped clipboard borrowing follow [ADR 0005](adr/0005-textedit-native-acceptance.md).
 The following describes the earlier prototype and retained foundations.
 
 ## Historical prototype slice

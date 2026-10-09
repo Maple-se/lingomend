@@ -9,9 +9,9 @@ speakers. Keep your existing input method, write what you can, and use Chinese
 for expression gaps. Ask for help with your current sentence; necessary English
 corrections preserve your meaning, opinions and voice. Learning opens on demand.
 
-## Status: TextEdit T1 sentence-advice build (0.3.0)
+## Status: TextEdit T2 acceptance build (0.4.0)
 
-The current build delivers read-only sentence advice in TextEdit:
+The current build delivers sentence advice and explicit native acceptance in TextEdit:
 
 - Explicit **Control-Option-L** help; quiet background operation with no automatic generation.
 - Local current-sentence boundaries, including common abbreviations, decimals,
@@ -33,12 +33,22 @@ The current build delivers read-only sentence advice in TextEdit:
   never silently fall back to these fixtures.
 - TextEdit AX observation is active only during a requested operation/preview,
   to invalidate changed input or focus. It never schedules another model request.
-- Acceptance/native undo arrive in T2; on-demand explanations and post-acceptance
-  review arrive in T3. Old experimental settings do not enable these in T1.
+- Explicit **Control-Option-Return** or candidate-button acceptance; **Escape** or
+  **Control-Option-Period** cancellation. Ordinary Return/Tab are not intercepted.
+- Locally bounded edits, final source/focus/selection checks, one process-targeted
+  native paste, result verification and conditional caret placement.
+- Clipboard borrowing only during acceptance: in-memory multi-item/type snapshot,
+  ownership-checked restoration, refusal for unmaterializable/oversized data.
+  Third-party clipboard history/sync may retain temporary contents.
+- AX attributed-text conversion and local run preservation for basic fonts,
+  bold/italic, colors and underline. Unsupported format refuses, without a plain-text fallback.
+- Single native editor undo tested in an isolated NSTextView. Actual TextEdit
+  cross-process paste, undo and formatting remain user-acceptance checks.
+- On-demand explanations and post-acceptance review arrive in T3.
 
 Automated tests use synthetic in-memory responses. Users evaluate TextEdit UI,
-real-model quality and their input-method experience. This build keeps the draft
-unchanged while validating the new product flow.
+real-model quality and their input-method experience. The draft stays unchanged
+until explicit acceptance; unclear paste outcomes are reported without retries.
 
 TypeTide is an isolated MIT reference, not the product base. LingoMend owns its
 Smart Scope and companion UX. Private validation notes are not published.
@@ -58,14 +68,16 @@ to this app. Create a synthetic TextEdit document.
 
 Type `This works 轻载条件下.` or `I very like 这个方案.`, then press
 **Control-Option-L** to see context, advice and differences. **Control-Option-Period**
-dismisses it. Ordinary typing and IME composition keys remain untouched.
+dismisses it, as does Escape. **Control-Option-Return** accepts a suggested edit;
+release modifier keys after pressing it. Use TextEdit's **Command-Z** to undo.
+Ordinary typing and IME composition keys remain untouched.
 
 To use real suggestions, open **LM → 设置**, keep the DeepSeek preset,
 enter your key privately, and click **测试连接（合成文本）**. Then enable
 **使用配置的模型服务** and save. The explicit test can make one paid request
 even while normal networking is disabled. It does not read other apps.
 
-See the [TextEdit T1 experience steps](docs/textedit-t1-experience.md) for setup
+See the [TextEdit T2 experience steps](docs/textedit-t2-experience.md) for setup
 and a short user-driven test. Rebuilt ad-hoc signed apps can require manual
 Accessibility reauthorization; no development certificate is included.
 
@@ -80,6 +92,9 @@ Accessibility reauthorization; no development certificate is included.
   the focused field locally to resolve a sentence; only bounded context is sent.
 - Swift 6, AppKit and SwiftUI; no Electron, bundled large model or cloud relay.
 - No key logging, clipboard-based capture, or full-draft logs/analytics.
+- Temporary acceptance clipboard contents are not sent to the model or stored.
+  Clipboard restore and event dispatch are not atomic across processes; crashes,
+  late events and concurrent copy/focus changes remain explicit limitations.
 - Existing local learning foundations are retained for T3; full drafts are not
   retained. Assisted acceptance and independent-use evidence remain distinct.
 - Model credentials use the OS Keychain, isolated by complete normalized endpoint.
@@ -93,8 +108,8 @@ See the [staged development plan](docs/development-stages.md). Each stage ends
 with tests/build, Conventional Commits and a normal remote push, a report and
 user test steps. Work stops for feedback before proceeding to the next stage.
 
-Next: TextEdit feedback on sentence scope and natural advice; T2 safe acceptance
-and native undo, then T3 learning. Other-app compatibility follows that core loop.
+Next: user acceptance of TextEdit T2 editing, undo and formats, then T3 learning.
+Other-app compatibility follows that core loop.
 
 ## License
 
