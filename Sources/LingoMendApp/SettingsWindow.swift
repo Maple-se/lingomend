@@ -30,16 +30,13 @@ private struct SettingsView: View {
     var body: some View {
         ScrollView {
             Form {
-                Section("沉浸式伴随 · 保留你的输入法") {
-                    Toggle("启用伴随候选", isOn: $preferences.immersiveEnabled)
-                    Text("只监听你勾选的应用。停顿约 1 秒后，当前段落中的中文占位可出现英文候选；继续输入会取消旧候选。")
+                Section("按需表达帮助 · TextEdit T1") {
+                    Text("后台安静运行。在 TextEdit 按 ⌃⌥L：无选区读取当前句，有选区用所在句理解并限制在选区内。当前只预览建议和变化，原文保持不变。")
                         .font(.caption).foregroundStyle(.secondary)
                     appToggle("TextEdit", id: "com.apple.TextEdit")
-                    appToggle("Safari（包含其中所有非密码输入框）", id: "com.apple.Safari")
-                    Text("⌃⌥↩ 接受候选 · ⌃⌥K 展开学习 · ⌃⌥. 收起。暂不接管 Tab 或中文组词键。")
+                    Text("⌃⌥. 收起。输入或焦点变化使候选失效。保留现有输入法与普通输入键。")
                         .font(.caption)
-                    Toggle("启用实验性跨应用接受", isOn: $preferences.experimentalAcceptance)
-                    Text("替换和原生撤销仍待使用验证；关闭时只显示候选，并可主动复制。不会自动写入。")
+                    Text("安全接受与撤销在 T2 接入；按需学习在 T3 接入。先完成 TextEdit 的基本流程，再扩展其他应用。")
                         .font(.caption).foregroundStyle(.secondary)
                 }
                 Section("建议服务") {
@@ -51,17 +48,17 @@ private struct SettingsView: View {
                         }
                     }
                     Toggle("使用配置的模型服务（否则仅本地固定演示）", isOn: $preferences.networkEnabled)
-                    Text("保存并开启后，输入体验页及勾选应用的候选触发，会把中文占位和左右各最多 200 个 UTF-16 单位的上下文直接发给下方地址；短句可能全部包含。主动学习会追加候选短语。伴随开启时可自动发出请求。不要用于敏感内容；Safari 授权覆盖整个浏览器，不按网站区分。")
+                    Text("保存并开启后，手动求助会把当前句的目标与只读左右语境发给下方地址，合计最多 600 个 UTF-16 单位；超长句不截断发送。系统桥接在本地可能读取整个聚焦控件，再定位句子。不发送整篇、路径、应用身份或历史；不主动联网分析。")
                         .font(.caption).foregroundStyle(.secondary)
                     TextField("API Base URL", text: $preferences.provider.baseURL)
                     TextField("模型 ID", text: $preferences.provider.model)
                     SecureField("新 API Key（留空保留已有）", text: $key)
                     Toggle("删除此地址的已存密钥", isOn: $removeKey)
-                    Text("JSON object · 关闭思考 · 候选 192 tokens / 12 秒 · 解释 512 tokens / 30 秒\n本轮适配 DeepSeek 参数；更换地址不表示所有兼容服务均支持。")
+                    Text("JSON object · 关闭思考 · 句子建议 640 tokens / 15 秒\n候选按需请求，不自动重试；每次触发可能产生费用。当前使用 DeepSeek 参数。")
                         .font(.caption).foregroundStyle(.secondary)
                     Text("密钥存入 macOS 钥匙串，按服务地址隔离；设置文件不包含密钥。")
                         .font(.caption).foregroundStyle(.secondary)
-                    Text("“测试连接”只发送合成样例 This works 轻载条件下.，可能产生少量 API 费用；不读取其他应用或启用伴随。")
+                    Text("“测试连接”只发送合成句子 This works 轻载条件下.，可能产生少量 API 费用；不读取 TextEdit，也不保存网络开关。")
                         .font(.caption)
                     HStack {
                         Button(testTask == nil ? "测试连接（合成文本）" : "测试中…") { testConnection() }
@@ -69,15 +66,17 @@ private struct SettingsView: View {
                         if testTask != nil { Button("取消测试") { cancelTest(); status = "测试已取消" } }
                     }
                 }
-                Section("写作与学习") {
+                Section("写作与学习 · 后续阶段") {
+                    Text("当前按原意生成自然英文，修正必要的语法和搭配，保留作者语气、观点与技术信息。风格切换和学习收藏将在后续阶段开放。")
+                        .font(.caption).foregroundStyle(.secondary)
                     Picker("语境", selection: $preferences.context) {
                         ForEach(WritingContext.allCases, id: \.self) { Text($0.rawValue).tag($0) }
-                    }
+                    }.disabled(true)
                     Picker("修正强度", selection: $preferences.correctionLevel) {
                         Text("最小纠错").tag(CorrectionLevel.correct)
                         Text("更自然").tag(CorrectionLevel.natural)
-                    }
-                    Toggle("本地表达记忆（主动保存，不保存全文）", isOn: $preferences.learningEnabled)
+                    }.disabled(true)
+                    Toggle("本地表达记忆（主动保存，不保存全文）", isOn: $preferences.learningEnabled).disabled(true)
                     Toggle("本地累计统计（阶段 3 开放）", isOn: $preferences.statisticsEnabled).disabled(true)
                 }
                 HStack {
@@ -140,12 +139,12 @@ private struct SettingsView: View {
             defer { if testEpoch == token { testTask = nil } }
             do {
                 let credential = suppliedKey.isEmpty ? try ProviderCredentials.read(for: configuration) : suppliedKey
-                let result = try await DeepSeekExpressionProvider(configuration: configuration, apiKey: credential)
-                    .candidate(ExpressionRequest(source: "轻载条件下", left: "This works ", right: "."))
+                let result = try await DeepSeekSentenceProvider(configuration: configuration, apiKey: credential)
+                    .advice(SentenceRequest(target: "This works 轻载条件下."))
                 try Task.checkCancellation()
                 guard testEpoch == token else { return }
-                status = result.map { "连接与格式检查通过：\($0)；尚未保存设置" }
-                    ?? "服务返回 abstain；连接成功但未提供候选"
+                status = result.status == .suggest ? "连接与格式检查通过：\(result.replacement)；尚未保存设置"
+                    : "连接成功：\(result.status.rawValue)；\(result.message)"
             } catch is CancellationError { }
             catch { if testEpoch == token { status = providerMessage(error) } }
         }

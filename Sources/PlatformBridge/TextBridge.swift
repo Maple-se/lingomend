@@ -26,6 +26,7 @@ public struct TextSnapshot: Equatable, Sendable {
 
 public enum ScopeKind: String, Equatable, Sendable {
     case explicitSelection
+    case sentenceAtCaret
     case paragraphAtCaret
     case wholeShortField
 }
