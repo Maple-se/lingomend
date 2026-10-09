@@ -22,6 +22,8 @@ xcuserdata/
 # Logs and generated diagnostics
 *.log
 Diagnostics/
+# Runtime logs live outside this checkout; also exclude accidental local copies.
+LocalLogs/
 
 # Private validation notes, including Markdown logs outside .stage0/
 *validation-log*.md

@@ -9,7 +9,7 @@ speakers. Keep your existing input method, write what you can, and use Chinese
 for expression gaps. Ask for help with your current sentence; necessary English
 corrections preserve your meaning, opinions and voice. Learning opens on demand.
 
-## Status: TextEdit T2 acceptance build (0.4.0)
+## Status: TextEdit T2 + local diagnostics build (0.4.1)
 
 The current build delivers sentence advice and explicit native acceptance in TextEdit:
 
@@ -45,6 +45,13 @@ The current build delivers sentence advice and explicit native acceptance in Tex
 - Single native editor undo tested in an isolated NSTextView. Actual TextEdit
   cross-process paste, undo and formatting remain user-acceptance checks.
 - On-demand explanations and post-acceptance review arrive in T3.
+- Optional local diagnostics with a closed, content-free event schema and random operation IDs.
+  Development distributions default on; release/unknown distributions default off,
+  with independently persisted preferences. Settings changes take effect immediately.
+  At most five 1 MiB JSON Lines log files per channel, seven-day retention and a
+  256-event queue. No telemetry, text/clipboard/prompt/credential logging or log uploads.
+
+Diagnostics settings and experience checks: [T2.1 local diagnostics](docs/diagnostics-experience.md).
 
 Automated tests use synthetic in-memory responses. Users evaluate TextEdit UI,
 real-model quality and their input-method experience. The draft stays unchanged

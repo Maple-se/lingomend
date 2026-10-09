@@ -1,6 +1,7 @@
 import AppKit
 import ApplicationServices
 import Carbon
+import DiagnosticsCore
 
 @MainActor
 public protocol NativePasteDriving: AnyObject {
@@ -21,20 +22,47 @@ public struct NativePasteResult: Sendable {
 public final class NativeTextEditPaste {
   private let driver: any NativePasteDriving
   private let clipboard: NativeClipboardLease
+  private let diagnostics: any DiagnosticRecording
   public private(set) var isBusy = false
 
   public init(
-    driver: any NativePasteDriving, clipboard: NativeClipboardLease = NativeClipboardLease()
+    driver: any NativePasteDriving, clipboard: NativeClipboardLease = NativeClipboardLease(),
+    diagnostics: any DiagnosticRecording = NoOpDiagnostics()
   ) {
     self.driver = driver
     self.clipboard = clipboard
+    self.diagnostics = diagnostics
   }
 
-  public func accept(_ plan: SentenceEditPlan) async throws -> NativePasteResult {
+  public func accept(_ plan: SentenceEditPlan, operation: UUID? = nil) async throws -> NativePasteResult {
+    let start = ContinuousClock.now
+    var progress = AcceptanceProgress()
+    diagnostics.record(DiagnosticEvent(.acceptanceStarted, length: plan.scope.target.text.utf16.count), operation: operation)
+    do {
+      let result = try await perform(plan, operation: operation, progress: &progress)
+      diagnostics.record(DiagnosticEvent(.acceptanceCompleted,
+        level: result.clipboard == .failed || !result.caretPositioned ? .warning : .info,
+        outcome: result.clipboard == .failed || !result.caretPositioned ? .warning : .success,
+        durationMS: diagnosticMilliseconds(since: start), dispatched: true), operation: operation)
+      return result
+    } catch {
+      diagnostics.record(DiagnosticEvent(.acceptanceFailed, level: error is CancellationError ? .info : .error,
+        outcome: progress.dispatched ? .unconfirmed : (error is CancellationError ? .cancelled : .refused),
+        reason: pasteDiagnosticReason(error), stage: progress.stage,
+        durationMS: diagnosticMilliseconds(since: start), dispatched: progress.dispatched), operation: operation)
+      throw error
+    }
+  }
+
+  private struct AcceptanceProgress { var stage: DiagnosticStage = .preflight; var dispatched = false }
+
+  private func perform(_ plan: SentenceEditPlan, operation: UUID?, progress: inout AcceptanceProgress) async throws -> NativePasteResult {
     guard !isBusy else { throw NativePasteError.busy }
     isBusy = true
     defer { isBusy = false }
     try check(plan, current: driver.capture())
+    diagnostics.record(DiagnosticEvent(.preflightPassed, stage: .preflight), operation: operation)
+    progress.stage = .format
     let source = try driver.attributedTarget(plan.scope.target.range)
     guard source.string == plan.scope.target.text else {
       throw NativePasteError.stale(.sourceChanged)
@@ -44,6 +72,7 @@ public final class NativeTextEditPaste {
     let rtf = try rich.data(
       from: NSRange(location: 0, length: rich.length),
       documentAttributes: [.documentType: NSAttributedString.DocumentType.rtf])
+    diagnostics.record(DiagnosticEvent(.formatPrepared, stage: .format), operation: operation)
     // The acceptance shortcut may still be physically held. Never issue Cmd-V with
     // Ctrl/Option/Shift held, and never synthesize their key-up events for the user.
     for _ in 0..<80 {
@@ -54,7 +83,9 @@ public final class NativeTextEditPaste {
     guard driver.modifiersReleased else { throw NativePasteError.modifiersHeld }
     try Task.checkCancellation()
     try check(plan, current: driver.capture())
+    progress.stage = .clipboard
     try clipboard.begin(rtf: rtf, text: plan.insertedText)
+    diagnostics.record(DiagnosticEvent(.clipboardBorrowed, stage: .clipboard), operation: operation)
     var dispatched = false
     do {
       // All pre-paste operations below are synchronous on the main actor. Any mismatch
@@ -63,14 +94,19 @@ public final class NativeTextEditPaste {
       guard clipboard.ownsContents, driver.modifiersReleased else {
         throw NativePasteError.clipboardChanged
       }
+      progress.stage = .selection
       try driver.select(plan.range)
       let selected = try driver.capture()
       guard sameDocument(selected, plan.original), selected.text == plan.original.text,
         selected.revisionToken == plan.original.revisionToken, selected.selectedRange == plan.range,
         clipboard.ownsContents, driver.modifiersReleased
       else { throw NativePasteError.selectionFailed }
+      progress.stage = .dispatch
       try driver.postPaste()
       dispatched = true
+      progress.dispatched = true
+      diagnostics.record(DiagnosticEvent(.pasteDispatched, stage: .dispatch, dispatched: true), operation: operation)
+      progress.stage = .verification
 
       // After dispatch, cancellation cannot roll back an external edit. Finish bounded
       // verification/clipboard cleanup and report uncertainty rather than pasting again.
@@ -80,6 +116,7 @@ public final class NativeTextEditPaste {
         if let current = try? driver.capture(), sameDocument(current, plan.original),
           current.text == plan.expectedText
         {
+          diagnostics.record(DiagnosticEvent(.pasteVerified, outcome: .success, stage: .verification), operation: operation)
           let nativeCaret = NSRange(
             location: plan.range.location + plan.insertedText.utf16.count, length: 0)
           var positioned = current.selectedRange == plan.caretAfter
@@ -91,17 +128,48 @@ public final class NativeTextEditPaste {
                 && verified.selectedRange == plan.caretAfter
             }
           }
-          return NativePasteResult(clipboard: clipboard.restore(), caretPositioned: positioned)
+          diagnostics.record(DiagnosticEvent(.caretChecked, outcome: positioned ? .success : .warning), operation: operation)
+          progress.stage = .cleanup
+          return NativePasteResult(clipboard: restoreClipboard(operation: operation), caretPositioned: positioned)
         }
         try? await Task.sleep(for: .milliseconds(20))
       } while clock.now < deadline
       throw NativePasteError.resultUnconfirmed
     } catch {
       if !dispatched { restoreSelectionIfUnchanged(plan) }
-      if clipboard.restore() == .failed {
+      if restoreClipboard(operation: operation) == .failed {
         throw NativePasteError.clipboardRestorationFailed(dispatched: dispatched)
       }
       throw error
+    }
+  }
+
+  private func restoreClipboard(operation: UUID?) -> ClipboardRestoration {
+    let result = clipboard.restore()
+    let outcome: DiagnosticOutcome = switch result {
+    case .restored: .restored; case .changedExternally: .superseded; case .failed: .failed
+    }
+    diagnostics.record(DiagnosticEvent(.clipboardRestored, level: result == .failed ? .warning : .info,
+      outcome: outcome, stage: .cleanup), operation: operation)
+    return result
+  }
+
+  private func pasteDiagnosticReason(_ error: Error) -> DiagnosticReason {
+    if error is CancellationError { return .userCancelled }
+    if case AccessibilityCaptureError.permissionRequired = error { return .permissionRequired }
+    guard let error = error as? NativePasteError else { return .unknown }
+    switch error {
+    case .busy: return .busy
+    case .stale: return .stale
+    case .formatUnavailable: return .formatUnavailable
+    case .unsupportedFormat: return .unsupportedFormat
+    case .clipboardUnavailable: return .clipboardUnavailable
+    case .clipboardChanged: return .clipboardChanged
+    case .modifiersHeld: return .modifiersHeld
+    case .selectionFailed: return .selectionFailed
+    case .eventUnavailable: return .eventUnavailable
+    case .resultUnconfirmed: return .resultUnconfirmed
+    case .clipboardRestorationFailed: return .clipboardRestorationFailed
     }
   }
 

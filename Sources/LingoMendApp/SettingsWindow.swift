@@ -1,16 +1,17 @@
 import AppKit
 import CoachCore
 import SwiftUI
+import DiagnosticsCore
 
 @MainActor
 final class SettingsWindow {
     private var window: NSWindow?
-    func show(preferences: AppPreferences, onSave: @escaping @MainActor (AppPreferences) -> Void) {
+    func show(preferences: AppPreferences, diagnostics: AppDiagnostics, onSave: @escaping @MainActor (AppPreferences) -> Void) {
         let window = self.window ?? NSWindow(contentRect: NSRect(x: 0, y: 0, width: 560, height: 650),
                               styleMask: [.titled, .closable], backing: .buffered, defer: false)
         window.title = "LingoMend · 设置"
         window.isReleasedWhenClosed = false
-        window.contentView = NSHostingView(rootView: SettingsView(preferences: preferences, window: window, onSave: onSave))
+        window.contentView = NSHostingView(rootView: SettingsView(preferences: preferences, diagnostics: diagnostics, window: window, onSave: onSave))
         window.center(); window.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
         self.window = window
@@ -19,6 +20,7 @@ final class SettingsWindow {
 
 private struct SettingsView: View {
     @State var preferences: AppPreferences
+    @ObservedObject var diagnostics: AppDiagnostics
     let window: NSWindow
     let onSave: @MainActor (AppPreferences) -> Void
     @State private var key = ""
@@ -81,6 +83,7 @@ private struct SettingsView: View {
                     Toggle("本地表达记忆（主动保存，不保存全文）", isOn: $preferences.learningEnabled).disabled(true)
                     Toggle("本地累计统计（阶段 3 开放）", isOn: $preferences.statisticsEnabled).disabled(true)
                 }
+                DiagnosticsSettingsSection(diagnostics: diagnostics)
                 HStack {
                     Button("保存设置") { save() }.disabled(testTask != nil)
                     Text(status).font(.caption).foregroundStyle(.secondary)
@@ -136,6 +139,8 @@ private struct SettingsView: View {
         var configuration = preferences.provider
         configuration.outputFormat = .jsonObject
         let suppliedKey = key
+        let operation = UUID(), start = ContinuousClock.now
+        diagnostics.recorder.record(DiagnosticEvent(.connectionTestStarted, mode: .network), operation: operation)
         status = "正在请求合成文本候选…"
         testTask = Task { @MainActor in
             defer { if testEpoch == token { testTask = nil } }
@@ -144,11 +149,48 @@ private struct SettingsView: View {
                 let result = try await DeepSeekSentenceProvider(configuration: configuration, apiKey: credential)
                     .advice(SentenceRequest(target: "This works 轻载条件下."))
                 try Task.checkCancellation()
+                diagnostics.recorder.record(DiagnosticEvent(.connectionTestCompleted,
+                    outcome: diagnosticAdviceOutcome(result), mode: .network,
+                    durationMS: diagnosticMilliseconds(since: start)), operation: operation)
                 guard testEpoch == token else { return }
                 status = result.status == .suggest ? "连接与格式检查通过：\(result.replacement)；尚未保存设置"
                     : "连接成功：\(result.status.rawValue)；\(result.message)"
-            } catch is CancellationError { }
-            catch { if testEpoch == token { status = providerMessage(error) } }
+            } catch {
+                let code: Int? = if case CoachingProviderError.httpStatus(let code) = error { code } else { nil }
+                diagnostics.recorder.record(DiagnosticEvent(.connectionTestFailed,
+                    level: error is CancellationError ? .info : .error,
+                    outcome: error is CancellationError ? .cancelled : .failed,
+                    reason: diagnosticReason(error), mode: .network,
+                    durationMS: diagnosticMilliseconds(since: start), httpStatus: code), operation: operation)
+                if testEpoch == token, !(error is CancellationError) { status = providerMessage(error) }
+            }
+        }
+    }
+}
+
+private struct DiagnosticsSettingsSection: View {
+    @ObservedObject var diagnostics: AppDiagnostics
+    @State private var confirmClear = false
+    var body: some View {
+        Section("本地开发诊断") {
+            Toggle("记录本地调试日志（立即生效）", isOn: Binding(
+                get: { diagnostics.enabled },
+                set: { value in Task { await diagnostics.setEnabled(value) } }))
+                .disabled(diagnostics.busy)
+            Text("渠道：\(diagnostics.channel.rawValue) · 默认\(diagnostics.channel.defaultEnabled ? "开启" : "关闭")\n\(diagnostics.statusLabel)")
+                .font(.caption).foregroundStyle(.secondary)
+            Text("仅记录固定流程事件、随机操作编号、长度、耗时和错误分类。原文、建议、提示词、剪贴板、密钥及网络正文不入日志。不上传；最多 5 个 1 MiB 文件，保留 7 天。关闭不删除已有文件。")
+                .font(.caption).foregroundStyle(.secondary)
+            HStack {
+                Button("打开日志目录") { diagnostics.openDirectory() }
+                Button("清空日志…") { confirmClear = true }.disabled(diagnostics.busy)
+                Button("恢复渠道默认") { Task { await diagnostics.reset() } }.disabled(diagnostics.busy)
+            }
+            Text("开关独立保存，无需点“保存设置”。清空只删除本模块日志；开启时会生成新的会话头。")
+                .font(.caption).foregroundStyle(.secondary)
+        }
+        .confirmationDialog("永久删除当前渠道的本地日志？", isPresented: $confirmClear) {
+            Button("清空日志（不可恢复）", role: .destructive) { Task { await diagnostics.clear() } }
         }
     }
 }

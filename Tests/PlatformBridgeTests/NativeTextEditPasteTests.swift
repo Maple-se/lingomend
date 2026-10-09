@@ -1,5 +1,6 @@
 import AppKit
 import PlatformBridge
+import DiagnosticsCore
 import XCTest
 
 @MainActor
@@ -54,10 +55,18 @@ private final class TestPasteDriver: NativePasteDriving {
   }
 }
 
+private final class PasteEventSpy: DiagnosticRecording, @unchecked Sendable {
+  private let lock = NSLock()
+  private var stored: [(DiagnosticEvent, UUID?)] = []
+  var events: [(DiagnosticEvent, UUID?)] { lock.withLock { stored } }
+  func record(_ event: DiagnosticEvent, operation: UUID?) { lock.withLock { stored.append((event, operation)) } }
+}
+
 final class NativeTextEditPasteTests: XCTestCase {
   @MainActor private func fixture(
     _ text: String = "First stays. This works 轻载条件下.",
-    replacement: String = "This works under light-load conditions."
+    replacement: String = "This works under light-load conditions.",
+    diagnostics: any DiagnosticRecording = NoOpDiagnostics()
   ) throws
     -> (NSPasteboard, TestPasteDriver, NativeTextEditPaste, SentenceEditPlan)
   {
@@ -71,8 +80,36 @@ final class NativeTextEditPasteTests: XCTestCase {
     )
     return (
       board, driver,
-      NativeTextEditPaste(driver: driver, clipboard: NativeClipboardLease(board: board)), plan
+      NativeTextEditPaste(driver: driver, clipboard: NativeClipboardLease(board: board), diagnostics: diagnostics), plan
     )
+  }
+  @MainActor func testDiagnosticSuccessCorrelationAndSingleCleanup() async throws {
+    let spy = PasteEventSpy(), operation = UUID()
+    let (board, _, writer, plan) = try fixture(diagnostics: spy)
+    defer { board.releaseGlobally() }
+    _ = try await writer.accept(plan, operation: operation)
+    XCTAssertEqual(spy.events.map { $0.0.name }, [.acceptanceStarted, .preflightPassed, .formatPrepared,
+      .clipboardBorrowed, .pasteDispatched, .pasteVerified, .caretChecked, .clipboardRestored, .acceptanceCompleted])
+    XCTAssertTrue(spy.events.allSatisfy { $0.1 == operation })
+    let encoded = String(decoding: try JSONEncoder().encode(spy.events.map(\.0)), as: UTF8.self)
+    XCTAssertFalse(encoded.contains("CLIPBOARD_BEFORE"))
+    XCTAssertFalse(encoded.contains("under light-load conditions"))
+    XCTAssertFalse(encoded.contains("轻载条件下"))
+  }
+  @MainActor func testDiagnosticFailureBeforeDispatchVersusUnconfirmed() async throws {
+    for dispatched in [false, true] {
+      let spy = PasteEventSpy()
+      let (board, driver, writer, plan) = try fixture(diagnostics: spy)
+      defer { board.releaseGlobally() }
+      driver.formatFails = !dispatched; driver.ignorePaste = dispatched
+      do { _ = try await writer.accept(plan, operation: UUID()); XCTFail() } catch { }
+      let failures = spy.events.filter { $0.0.name == .acceptanceFailed }
+      XCTAssertEqual(failures.count, 1)
+      XCTAssertEqual(failures.first?.0.dispatched, dispatched)
+      XCTAssertEqual(failures.first?.0.outcome, dispatched ? .unconfirmed : .refused)
+      XCTAssertEqual(failures.first?.0.reason, dispatched ? .resultUnconfirmed : .formatUnavailable)
+      XCTAssertEqual(spy.events.filter { $0.0.name == .clipboardRestored }.count, dispatched ? 1 : 0)
+    }
   }
   @MainActor func testOneNativeEditorPasteAndOneUndoWithOutsideTextUntouched() async throws {
     let (board, driver, writer, plan) = try fixture()
