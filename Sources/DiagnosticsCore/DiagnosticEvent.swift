@@ -13,6 +13,7 @@ public enum BuildChannel: String, Codable, Sendable {
 public enum DiagnosticName: String, Codable, Sendable {
     case sessionStarted, appStarted, appStopping, permissionChecked, hotKeyRegistered
     case helpStarted, scopeResolved, helpFailed, candidateShown, candidateDismissed
+    case readingStarted, readingCaptured, readingShown, readingFailed
     case modelStarted, providerInvoked, modelCompleted, modelFailed, cacheHit, throttleWait, cooldownRejected
     case acceptanceStarted, preflightPassed, formatPrepared, clipboardBorrowed, pasteDispatched
     case pasteVerified, caretChecked, clipboardRestored, acceptanceCompleted, acceptanceFailed
@@ -34,9 +35,9 @@ public enum DiagnosticReason: String, Codable, Sendable {
 public enum DiagnosticStage: String, Codable, Sendable {
     case capture, scope, model, candidate, preflight, format, clipboard, selection, dispatch, verification, cleanup
 }
-public enum DiagnosticScope: String, Codable, Sendable { case selection, currentSentence }
+public enum DiagnosticScope: String, Codable, Sendable { case selection, currentSentence, excerpt, selectionOnly }
 public enum DiagnosticMode: String, Codable, Sendable { case local, network }
-public enum DiagnosticShortcut: String, Codable, Sendable { case help, accept, cancelPeriod, cancelEscape }
+public enum DiagnosticShortcut: String, Codable, Sendable { case help, read, accept, cancelPeriod, cancelEscape }
 public enum DiagnosticLevel: String, Codable, Sendable {
     case debug, info, warning, error
     var priority: Int { switch self { case .debug: 0; case .info: 1; case .warning: 2; case .error: 3 } }

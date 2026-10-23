@@ -13,6 +13,28 @@ struct AppPreferences: Codable, Equatable, Sendable {
     var experimentalAcceptance = false
     var learningEnabled = true
     var statisticsEnabled = false
+    var globalAccessEnabled = false
+
+    init() {}
+    enum CodingKeys: String, CodingKey {
+        case immersiveEnabled, allowedApplications, networkEnabled, provider, context, correctionLevel
+        case experimentalAcceptance, learningEnabled, statisticsEnabled, globalAccessEnabled
+    }
+
+    init(from decoder: any Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        immersiveEnabled = try c.decodeIfPresent(Bool.self, forKey: .immersiveEnabled) ?? false
+        allowedApplications = try c.decodeIfPresent(Set<String>.self, forKey: .allowedApplications) ?? []
+        networkEnabled = try c.decodeIfPresent(Bool.self, forKey: .networkEnabled) ?? false
+        provider = try c.decodeIfPresent(ProviderConfiguration.self, forKey: .provider) ?? DeepSeekExpressionProvider.preset
+        context = try c.decodeIfPresent(WritingContext.self, forKey: .context) ?? .general
+        correctionLevel = try c.decodeIfPresent(CorrectionLevel.self, forKey: .correctionLevel) ?? .correct
+        experimentalAcceptance = try c.decodeIfPresent(Bool.self, forKey: .experimentalAcceptance) ?? false
+        learningEnabled = try c.decodeIfPresent(Bool.self, forKey: .learningEnabled) ?? true
+        statisticsEnabled = try c.decodeIfPresent(Bool.self, forKey: .statisticsEnabled) ?? false
+        // A new scope of access is not silently enabled by decoding an older settings file.
+        globalAccessEnabled = try c.decodeIfPresent(Bool.self, forKey: .globalAccessEnabled) ?? false
+    }
 
     static func load() -> Self {
         guard let data = UserDefaults.standard.data(forKey: "LingoMend.preferences.v1") else { return Self() }

@@ -82,6 +82,10 @@ func diagnosticReason(_ error: Error) -> DiagnosticReason {
         switch error { case .invalidRange: return .invalidRange; case .empty: return .empty
         case .multipleSentences: return .multipleSentences; case .tooLong: return .tooLong }
     }
+    if let error = error as? ReadingScopeError {
+        switch error { case .emptySelection: return .empty; case .tooLong: return .tooLong
+        case .invalidRange: return .invalidRange }
+    }
     if case AccessibilityCaptureError.permissionRequired = error { return .permissionRequired }
     if error is SentenceInputError { return .unsupportedInput }
     return .captureUnavailable

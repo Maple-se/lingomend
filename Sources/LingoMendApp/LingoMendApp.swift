@@ -16,14 +16,17 @@ enum LingoMendApp {
     }
 }
 
-/// Explicit, TextEdit-only advice; acceptance is a separate user-authorized operation.
+/// Explicit writing advice and read-only contextual interpretation share one cancellable session.
 @MainActor
 private final class LingoMendDelegate: NSObject, NSApplicationDelegate {
     private let reader = MacOSAccessibilityTextReader()
+    private let readingReader = MacOSReadingSelectionReader()
     private let observer = MacOSFocusedTextObserver()
     private let diagnostics = AppDiagnostics()
     private lazy var service = SentenceService(preferences: AppPreferences.load(), diagnostics: diagnostics.recorder)
+    private lazy var readingService = ReadingService(preferences: AppPreferences.load(), diagnostics: diagnostics.recorder)
     private let panel = SentenceCandidatePanel()
+    private let readingPanel = ReadingPanel()
     private let notice = RequestNotice()
     private lazy var writer = NativeTextEditPaste(driver: MacOSTextEditPasteDriver(reader: reader), diagnostics: diagnostics.recorder)
     private let settingsWindow = SettingsWindow()
@@ -31,6 +34,7 @@ private final class LingoMendDelegate: NSObject, NSApplicationDelegate {
     private var statusItem: NSStatusItem?
     private var statusLine: NSMenuItem?
     private var trigger: GlobalHotKey?
+    private var readingKey: GlobalHotKey?
     private var dismissKey: GlobalHotKey?
     private var acceptKey: GlobalHotKey?
     private var escapeMonitor: Any?
@@ -39,6 +43,7 @@ private final class LingoMendDelegate: NSObject, NSApplicationDelegate {
     private var hasPreview = false
     private var proposal: SentenceProposal?
     private var activeSnapshot: TextSnapshot?
+    private var activeReading: ReadingCapture?
     private var acceptance: Task<Void, Never>?
     private var quitAfterAcceptance = false
     private var finishing = false
@@ -51,6 +56,8 @@ private final class LingoMendDelegate: NSObject, NSApplicationDelegate {
                 outcome: AXIsProcessTrusted() ? .success : .refused))
             diagnostics.recorder.record(DiagnosticEvent(.hotKeyRegistered,
                 outcome: triggerRegistered ? .success : .failed, shortcut: .help))
+            diagnostics.recorder.record(DiagnosticEvent(.hotKeyRegistered,
+                outcome: readingRegistered ? .success : .failed, shortcut: .read))
         }
         NSApp.setActivationPolicy(.accessory)
         let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
@@ -58,12 +65,14 @@ private final class LingoMendDelegate: NSObject, NSApplicationDelegate {
         let menu = NSMenu()
         let status = NSMenuItem(title: service.modeLabel, action: nil, keyEquivalent: "")
         status.isEnabled = false; statusLine = status; menu.addItem(status)
-        let version = NSMenuItem(title: "LingoMend \(Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "development") · TextEdit T2", action: nil, keyEquivalent: "")
+        let version = NSMenuItem(title: "LingoMend \(Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "development") · T3 开发版", action: nil, keyEquivalent: "")
         version.isEnabled = false; menu.addItem(version)
         add("设置…", action: #selector(showSettings), to: menu)
         menu.addItem(.separator())
         let hint = NSMenuItem(title: "求助 ⌃⌥L · 接受 ⌃⌥↩ · 取消 Esc / ⌃⌥.", action: nil, keyEquivalent: "")
         hint.isEnabled = false; menu.addItem(hint)
+        let readingHint = NSMenuItem(title: "选词 / 选句解释 ⌃⌥D", action: nil, keyEquivalent: "")
+        readingHint.isEnabled = false; menu.addItem(readingHint)
         add("开启辅助功能权限…", action: #selector(requestAccessibility), to: menu)
         menu.addItem(.separator())
         add("退出 LingoMend", action: #selector(quitApp), to: menu)
@@ -72,11 +81,15 @@ private final class LingoMendDelegate: NSObject, NSApplicationDelegate {
         trigger = hotKey
         triggerRegistered = hotKey.register()
         if !triggerRegistered { status.title = "⌃⌥L 注册失败；请检查快捷键冲突" }
+        let reading = GlobalHotKey(keyCode: UInt32(kVK_ANSI_D), identifier: 5) { [weak self] in self?.requestReading() }
+        readingKey = reading; readingRegistered = reading.register()
+        if !readingRegistered { status.title = "⌃⌥D 注册失败；请检查快捷键冲突" }
         observer.onChange = { [weak self] in self?.checkObservedChange() }
         observer.onUnavailable = { [weak self] in self?.discardChangedPreview() }
         reader.allowedApplications = ["com.apple.TextEdit"]
     }
     private var triggerRegistered = false
+    private var readingRegistered = false
 
     private func add(_ title: String, action: Selector, to menu: NSMenu) {
         let item = NSMenuItem(title: title, action: action, keyEquivalent: "")
@@ -110,6 +123,7 @@ private final class LingoMendDelegate: NSObject, NSApplicationDelegate {
             guard let self else { return }
             invalidate(reason: .settingsChanged); preferences = updated
             service = SentenceService(preferences: updated, diagnostics: diagnostics.recorder)
+            readingService = ReadingService(preferences: updated, diagnostics: diagnostics.recorder)
             statusLine?.title = service.modeLabel
         }
     }
@@ -121,6 +135,10 @@ private final class LingoMendDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func checkObservedChange() {
+        if let reading = activeReading {
+            if !readingReader.isCurrent(reading) { discardChangedPreview() }
+            return
+        }
         guard let snapshot = activeSnapshot, acceptance == nil else { return }
         let token = epoch
         Task { @MainActor [weak self] in
@@ -135,7 +153,7 @@ private final class LingoMendDelegate: NSObject, NSApplicationDelegate {
     private func discardChangedPreview() {
         guard acceptance == nil, generation != nil || hasPreview else { return }
         invalidate(reason: .sourceOrFocusChanged)
-        statusLine?.title = "输入或焦点已变化；可重新按 ⌃⌥L 求助"
+        statusLine?.title = "文本或焦点已变化；可重新按快捷键求助"
     }
 
     private func invalidate(reason: DiagnosticReason? = nil) {
@@ -145,6 +163,7 @@ private final class LingoMendDelegate: NSObject, NSApplicationDelegate {
         }
         epoch = UUID(); generation?.cancel(); generation = nil
         hasPreview = false; proposal = nil; activeSnapshot = nil; panel.hide(); notice.hide()
+        activeReading = nil; readingReader.clear(); readingPanel.hide()
         unregisterInteractionKeys()
         observer.configure(enabled: false, allowedApplications: [])
     }
@@ -270,6 +289,81 @@ private final class LingoMendDelegate: NSObject, NSApplicationDelegate {
                 guard epoch == token else { return }
                 feedback(error is CoachingProviderError || error is CredentialError
                     ? providerMessage(error) : "当前编辑器暂不支持读取或定位；请检查光标位置")
+            }
+        }
+    }
+
+    private func requestReading() {
+        guard acceptance == nil else { return }
+        invalidate(reason: .superseded)
+        let token = epoch
+        diagnostics.recorder.record(DiagnosticEvent(.readingStarted, shortcut: .read), operation: token)
+        guard let identifier = NSWorkspace.shared.frontmostApplication?.bundleIdentifier,
+              preferences.globalAccessEnabled || preferences.allowedApplications.contains(identifier) else {
+            diagnostics.recorder.record(DiagnosticEvent(.readingFailed, outcome: .refused,
+                reason: .applicationNotAllowed, shortcut: .read), operation: token)
+            feedback("请在设置中允许其他应用的按需读取，或先在已允许的 TextEdit 中体验"); return
+        }
+        observer.configure(enabled: true, allowedApplications: [identifier])
+        registerCancellation(); feedback("正在读取选中词句…", persistent: true)
+        generation = Task { @MainActor [weak self] in
+            guard let self else { return }
+            var stage: DiagnosticStage = .capture
+            defer {
+                if epoch == token {
+                    generation = nil
+                    if !hasPreview {
+                        activeReading = nil; readingReader.clear(); unregisterInteractionKeys()
+                        observer.configure(enabled: false, allowedApplications: [])
+                    }
+                }
+            }
+            do {
+                let capture = try readingReader.capture()
+                try Task.checkCancellation()
+                guard epoch == token else { return }
+                activeReading = capture
+                observer.observeReadingSelection(from: readingReader)
+                stage = .scope
+                let request = try ReadingProposal.request(for: capture.scope)
+                let scope: DiagnosticScope = switch request.contextKind {
+                case .sentence: .currentSentence
+                case .excerpt: .excerpt
+                case .selectionOnly: .selectionOnly
+                }
+                diagnostics.recorder.record(DiagnosticEvent(.readingCaptured, stage: .scope,
+                    scope: scope, shortcut: .read, length: request.context.utf16.count), operation: token)
+                stage = .model
+                feedback("\(service.modeLabel) · 正在解释选中内容…", persistent: true)
+                let explanation = try await readingService.explain(request, operation: token)
+                try Task.checkCancellation()
+                guard epoch == token else { return }
+                stage = .candidate
+                guard readingReader.isCurrent(capture) else { discardChangedPreview(); return }
+                hasPreview = true; notice.hide()
+                readingPanel.show(request: request, explanation: explanation, anchor: capture.anchor,
+                    onDismiss: { [weak self] in self?.invalidate(reason: .userCancelled) })
+                diagnostics.recorder.record(DiagnosticEvent(.readingShown, outcome: .success,
+                    stage: .candidate, scope: scope, shortcut: .read), operation: token)
+                statusLine?.title = "语境解释已显示 · 不修改原文"
+            } catch is CancellationError { }
+            catch {
+                guard epoch == token else { return }
+                if stage != .model {
+                    diagnostics.recorder.record(DiagnosticEvent(.readingFailed, outcome: .refused,
+                        reason: diagnosticReason(error), stage: stage, shortcut: .read), operation: token)
+                }
+                if case AccessibilityCaptureError.permissionRequired = error {
+                    feedback("需要辅助功能权限；从 LM 菜单手动开启")
+                } else if case ReadingScopeError.tooLong = error {
+                    feedback("选区过长；请选择一个词、句子或不超过 1200 UTF-16 单位的短段落")
+                } else if error is CoachingProviderError || error is CredentialError {
+                    if !preferences.networkEnabled, case CoachingProviderError.refused = error {
+                        feedback("本地演示只解释样例 current；可在设置中开启模型服务解释其他内容")
+                    } else { feedback(providerMessage(error)) }
+                } else {
+                    feedback("未取得可访问的文字选区；请先选中词句。扫描 PDF 暂不支持")
+                }
             }
         }
     }

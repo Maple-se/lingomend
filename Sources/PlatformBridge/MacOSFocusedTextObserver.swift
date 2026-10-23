@@ -11,6 +11,7 @@ public final class MacOSFocusedTextObserver: NSObject {
     private var allowedApplications: Set<String> = []
     private var observer: AXObserver?
     private var element: AXUIElement?
+    private var readingElement: AXUIElement?
 
     public override init() {
         super.init()
@@ -22,6 +23,23 @@ public final class MacOSFocusedTextObserver: NSObject {
         self.enabled = enabled
         self.allowedApplications = allowedApplications
         activeApplicationChanged()
+    }
+
+    /// Read-only browser/PDF selections may be owned by a parent rather than AX focus.
+    /// Subscribe only to the source explicitly captured for the current request.
+    public func observeReadingSelection(from reader: MacOSReadingSelectionReader) {
+        guard enabled, let observer, let source = reader.capturedElement,
+              element == nil || !CFEqual(element!, source) else { return }
+        if let readingElement {
+            for notification in [kAXValueChangedNotification, kAXSelectedTextChangedNotification] {
+                _ = AXObserverRemoveNotification(observer, readingElement, notification as CFString)
+            }
+        }
+        readingElement = source
+        let context = Unmanaged.passUnretained(self).toOpaque()
+        for notification in [kAXValueChangedNotification, kAXSelectedTextChangedNotification] {
+            _ = AXObserverAddNotification(observer, source, notification as CFString, context)
+        }
     }
 
     @objc private func activeApplicationChanged() {
@@ -74,6 +92,7 @@ public final class MacOSFocusedTextObserver: NSObject {
         }
         observer = nil
         element = nil
+        readingElement = nil
     }
 
     private static let callback: AXObserverCallback = { _, _, _, context in

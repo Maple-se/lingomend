@@ -124,7 +124,12 @@ public struct SentenceScopeResolver: Sendable {
         let abbreviations: Set<String> = ["dr.", "mr.", "mrs.", "ms.", "prof.", "fig.", "no.",
             "vs.", "e.g.", "i.e.", "u.s.", "u.k.", "et.", "al."]
         if abbreviations.contains(token) { return false }
-        if index - start == 1, text[start].isUppercase { return false }
+        if index - start == 1, text[start].isUppercase {
+            // A numeric unit (3.5 A.) ends a sentence, unlike a personal initial (A. Smith).
+            let previousWord = String(text[..<start]).split(whereSeparator: \.isWhitespace).last
+            let numericUnit = "AVWKCFH".contains(text[start]) && previousWord?.last?.isNumber == true
+            if !numericUnit { return false }
+        }
         // A period surrounded by URL punctuation remains within that token.
         if next == "/" || next == "@" { return false }
         return true

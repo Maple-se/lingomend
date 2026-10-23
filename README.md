@@ -9,7 +9,20 @@ speakers. Keep your existing input method, write what you can, and use Chinese
 for expression gaps. Ask for help with your current sentence; necessary English
 corrections preserve your meaning, opinions and voice. Learning opens on demand.
 
-## Status: TextEdit T2 + local diagnostics build (0.4.1)
+## Status: T3 in development (0.5.0)
+
+The first T3 slice adds **Control-Option-D** read-only contextual explanations for
+accessible selections across apps. Selected words/phrases receive their meaning
+and an explanation of the captured sentence. Missing or partial context is labelled;
+no context is invented. Native text ranges and WebKit text markers are supported,
+with bounded front-window selection discovery for document/PDF views. Text PDFs
+are targets; scanned PDFs require OCR and are outside this stage.
+
+Enable other-app access explicitly in settings. Requests reuse your endpoint,
+Keychain credential and network switch: selection ≤1200 UTF-16 units, total context
+≤2000; 1400 output tokens / 20 seconds. No clipboard-based capture or read-only edits.
+See [reading experience steps](docs/t3-reading-experience.md). Real-app compatibility
+remains a user-experience check; global writing/short paragraphs are the next T3 slice.
 
 The current build delivers sentence advice and explicit native acceptance in TextEdit:
 
@@ -44,7 +57,7 @@ The current build delivers sentence advice and explicit native acceptance in Tex
   bold/italic, colors and underline. Unsupported format refuses, without a plain-text fallback.
 - Single native editor undo tested in an isolated NSTextView. Actual TextEdit
   cross-process paste, undo and formatting remain user-acceptance checks.
-- On-demand explanations and post-acceptance review arrive in T3.
+- Selected-text explanations are available through Control-Option-D; learning collections remain later work.
 - Optional local diagnostics with a closed, content-free event schema and random operation IDs.
   Development distributions default on; release/unknown distributions default off,
   with independently persisted preferences. Settings changes take effect immediately.
@@ -115,8 +128,8 @@ See the [staged development plan](docs/development-stages.md). Each stage ends
 with tests/build, Conventional Commits and a normal remote push, a report and
 user test steps. Work stops for feedback before proceeding to the next stage.
 
-Next: user acceptance of TextEdit T2 editing, undo and formats, then T3 learning.
-Other-app compatibility follows that core loop.
+Next within T3: capability-driven global writing and selected short paragraphs,
+then user experience of editing/undo and reading in the target apps.
 
 ## License
 
