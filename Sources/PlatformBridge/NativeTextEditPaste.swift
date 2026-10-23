@@ -259,19 +259,19 @@ public final class MacOSNativePasteDriver: NativePasteDriving {
     guard let focused = reader.capturedElement, CFEqual(focused, element),
       NSWorkspace.shared.frontmostApplication?.processIdentifier == pid else { throw NativePasteError.selectionFailed }
     if current.selectedRange == range { return }
-    var settable = DarwinBoolean(false)
-    guard
-      AXUIElementIsAttributeSettable(element, kAXSelectedTextRangeAttribute as CFString, &settable)
-        == .success,
-      settable.boolValue
-    else { throw NativePasteError.selectionFailed }
     var range = CFRange(location: range.location, length: range.length)
-    guard let value = AXValueCreate(.cfRange, &range),
-      AXUIElementSetAttributeValue(element, kAXSelectedTextRangeAttribute as CFString, value)
-        == .success
-    else {
-      throw NativePasteError.selectionFailed
+    guard let value = AXValueCreate(.cfRange, &range) else { throw NativePasteError.selectionFailed }
+    for name in [kAXSelectedTextRangeAttribute, kAXSelectedTextRangesAttribute] {
+      var settable = DarwinBoolean(false)
+      guard AXUIElementIsAttributeSettable(element, name as CFString, &settable) == .success,
+            settable.boolValue else { continue }
+      let argument: CFTypeRef = name == kAXSelectedTextRangeAttribute ? value : [value] as CFArray
+      guard AXUIElementSetAttributeValue(element, name as CFString, argument) == .success else {
+        throw NativePasteError.selectionFailed
+      }
+      return
     }
+    throw NativePasteError.selectionFailed
   }
   public func postPaste() throws {
     guard pid > 0, NSWorkspace.shared.frontmostApplication?.processIdentifier == pid,

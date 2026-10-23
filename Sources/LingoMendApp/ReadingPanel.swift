@@ -53,7 +53,7 @@ private struct ReadingView: View {
                     Text(request.selection).font(.system(size: 17, weight: .semibold))
                         .fixedSize(horizontal: false, vertical: true)
                     if request.contextKind == .selectionOnly {
-                        Text("未读取到上下文，以下为常见含义。").font(.caption).foregroundStyle(.secondary)
+                        Text("仅解释选中文字；未取得周围语境。").font(.caption).foregroundStyle(.secondary)
                     } else if request.contextKind == .excerpt {
                         Text("依据读取到的片段解释；上下文可能不完整。").font(.caption).foregroundStyle(.secondary)
                     }

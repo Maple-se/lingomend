@@ -1,6 +1,6 @@
 # ADR 0007：全局写作与独立的语境阅读
 
-状态：T3 实现中；本提交交付阅读链路，通用写回和短段落随后接入。
+状态：T3 核心实现；0.5.2 补充选区接口兼容。真实应用体验待用户反馈。
 
 ## 产品边界
 
@@ -14,12 +14,16 @@
 `MacOSReadingSelectionReader` 优先读取当前元素及其父级的标准选区或文本标记。
 对于 PDF 等焦点在容器上的情况，限定在前台窗口查找，最多 80 个节点、深度 8、
 搜索预算 2 秒，每次 AX 调用另有短超时；单次调用/最终重验可能越过搜索预算。
+窗口未暴露聚焦编辑元素时，允许只读捕获从该前台窗口开始；窗口/焦点身份仍在返回前重验。
 密码控件拒绝，且不遍历其子树。未读取到选区时明确提示，不从剪贴板补取。
 
 标准范围路径对照实际文本与选中内容，取得所在句；大文档通过参数化范围读取有限片段。
 WebKit 路径通过系统 `AXTextMarkerRangeCopyStartMarker` / `CopyEndMarker` 取端点，
 查询暴露的 `AXIndexForTextMarker` 与句/段范围，再对照偏移处文字。没有暴露所需能力时
 保留实际拿到的选区，标记缺少语境，不以同名词搜索代替位置证据。
+标准范围也支持 `AXSelectedTextRanges` 只有一个条目、单数属性缺失的控件。
+若阅读选区由多个片段组成，只使用实际 `AXSelectedText`，不把片段间未选中文字并入语境；
+保留片段范围元数据重验，任一范围变化使结果失效。
 PDF 物理换行可归并为间隔，软连字符可消除；可见连字符保留，避免破坏真实复合词。
 
 纯值 `ReadingScope` 不含编辑授权；`ReadingRequest` 分离 selection/before/after/context_kind。
@@ -39,6 +43,7 @@ UI 展示实际读取的上下文及完整/片段/缺失状态；模型仍可能
 ## 依据与验证
 
 - [Apple 选区属性](https://developer.apple.com/documentation/applicationservices/kaxselectedtextattribute)
+- [Apple 非连续选区属性](https://developer.apple.com/documentation/applicationservices/kaxselectedtextrangesattribute)
 - [Apple 文本标记端点](https://developer.apple.com/documentation/applicationservices/3882828-axtextmarkerrangecopystartmarker)
 - [WebKit AX 参数实现](https://github.com/WebKit/WebKit/blob/main/Source/WebCore/accessibility/mac/WebAccessibilityObjectWrapperMac.mm)
 

@@ -87,6 +87,7 @@ func diagnosticReason(_ error: Error) -> DiagnosticReason {
         case .invalidRange: return .invalidRange }
     }
     if case AccessibilityCaptureError.permissionRequired = error { return .permissionRequired }
+    if case AccessibilityCaptureError.disjointSelection = error { return .invalidRange }
     if error is SentenceInputError { return .unsupportedInput }
     return .captureUnavailable
 }

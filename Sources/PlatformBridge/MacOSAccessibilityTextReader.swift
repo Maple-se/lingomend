@@ -11,6 +11,7 @@ public enum AccessibilityCaptureError: Error, Equatable, Sendable {
     case textTooLarge
     case selectionUnavailable
     case invalidSelection
+    case disjointSelection
     case focusChangedDuringCapture
     case protectedField
     case applicationNotAllowed
@@ -93,26 +94,8 @@ public final class MacOSAccessibilityTextReader: FocusedTextReading, SafeTextRep
             throw AccessibilityCaptureError.textUnavailable
         }
 
-        var selectionValue: CFTypeRef?
-        guard AXUIElementCopyAttributeValue(
-            focused,
-            kAXSelectedTextRangeAttribute as CFString,
-            &selectionValue
-        ) == .success,
-        let selectionValue,
-        CFGetTypeID(selectionValue) == AXValueGetTypeID() else {
+        guard let range = try AXSelectionRange.read(focused) else {
             throw AccessibilityCaptureError.selectionUnavailable
-        }
-        let axSelection = selectionValue as! AXValue
-        guard AXValueGetType(axSelection) == .cfRange else {
-            throw AccessibilityCaptureError.selectionUnavailable
-        }
-
-        var range = CFRange(location: 0, length: 0)
-        guard AXValueGetValue(axSelection, .cfRange, &range),
-              range.location >= 0,
-              range.length >= 0 else {
-            throw AccessibilityCaptureError.invalidSelection
         }
 
         let length = (text as NSString).length
@@ -158,7 +141,7 @@ public final class MacOSAccessibilityTextReader: FocusedTextReading, SafeTextRep
             enabled: (attribute(kAXEnabledAttribute) as? Bool) != false,
             explicitlyEditable: attribute("AXEditable") as? Bool,
             valueSettable: settable(kAXValueAttribute), selectedTextSettable: settable(kAXSelectedTextAttribute),
-            rangeSettable: settable(kAXSelectedTextRangeAttribute))
+            rangeSettable: settable(kAXSelectedTextRangeAttribute) || settable(kAXSelectedTextRangesAttribute))
 
         // AX has no universal edit revision. This is a content fingerprint;
         // replacement must still compare the full source and focused element.

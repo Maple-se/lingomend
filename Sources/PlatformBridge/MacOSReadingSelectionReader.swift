@@ -16,10 +16,11 @@ public final class MacOSReadingSelectionReader {
     private struct Source {
         let capture: ReadingCapture
         let element: AXUIElement
-        let focus: AXUIElement
+        let focus: AXUIElement?
         let window: AXUIElement
         let pid: pid_t
         let marker: CFTypeRef?
+        let multipleRanges: CFTypeRef?
         let range: NSRange?
         let rawSelection: String
     }
@@ -36,22 +37,22 @@ public final class MacOSReadingSelectionReader {
             throw AccessibilityCaptureError.applicationUnavailable
         }
         let application = AXUIElementCreateApplication(app.processIdentifier)
-        guard let window = element(attribute(application, kAXFocusedWindowAttribute)),
-              let focus = element(attribute(AXUIElementCreateSystemWide(), kAXFocusedUIElementAttribute)) else {
+        guard let window = element(attribute(application, kAXFocusedWindowAttribute)) else {
             throw AccessibilityCaptureError.focusedElementUnavailable
         }
-        if attribute(focus, kAXSubroleAttribute) as? String == "AXSecureTextField" {
+        let focus = element(attribute(AXUIElementCreateSystemWide(), kAXFocusedUIElementAttribute))
+        if let focus, attribute(focus, kAXSubroleAttribute) as? String == "AXSecureTextField" {
             throw AccessibilityCaptureError.protectedField
         }
         var pid: pid_t = 0
-        guard AXUIElementGetPid(focus, &pid) == .success, pid == app.processIdentifier else {
+        guard AXUIElementGetPid(focus ?? window, &pid) == .success, pid == app.processIdentifier else {
             throw AccessibilityCaptureError.focusChangedDuringCapture
         }
         let deadline = ContinuousClock.now.advanced(by: .seconds(2))
         var visited: [AXUIElement] = []
         // Prefer the focused element and its ancestors (Safari's focused leaf often has
         // no selection while its WebArea owns the selection marker range).
-        var candidate: AXUIElement? = focus
+        var candidate: AXUIElement? = focus ?? window
         for _ in 0..<12 {
             guard let current = candidate, ContinuousClock.now < deadline else { break }
             visited.append(current)
@@ -86,29 +87,33 @@ public final class MacOSReadingSelectionReader {
 
     /// Recheck the same addressed source, rather than searching for any matching word.
     public func isCurrent(_ capture: ReadingCapture) -> Bool {
+        let focus = element(attribute(AXUIElementCreateSystemWide(), kAXFocusedUIElementAttribute))
         guard let source, source.capture.id == capture.id,
               NSWorkspace.shared.frontmostApplication?.processIdentifier == source.pid,
-              let focus = element(attribute(AXUIElementCreateSystemWide(), kAXFocusedUIElementAttribute)),
-              CFEqual(focus, source.focus),
+              sameValue(focus, source.focus),
               let window = element(attribute(AXUIElementCreateApplication(source.pid), kAXFocusedWindowAttribute)),
               CFEqual(window, source.window),
               let fresh = try? read(source.element, identifier: capture.applicationIdentifier,
                 focus: focus, window: window, pid: source.pid),
               fresh.rawSelection == source.rawSelection, fresh.range == source.range,
               fresh.capture.scope == capture.scope else { return false }
-        if let marker = source.marker {
-            guard let current = fresh.marker, CFEqual(marker, current) else { return false }
-        }
-        return true
+        return sameValue(source.marker, fresh.marker) && sameValue(source.multipleRanges, fresh.multipleRanges)
     }
 
-    private func read(_ node: AXUIElement, identifier: String, focus: AXUIElement,
+    private func read(_ node: AXUIElement, identifier: String, focus: AXUIElement?,
                       window: AXUIElement, pid: pid_t) throws -> Source? {
         guard attribute(node, kAXSubroleAttribute) as? String != "AXSecureTextField" else { return nil }
         var owner: pid_t = 0
         guard AXUIElementGetPid(node, &owner) == .success, owner == pid else { return nil }
-        let range = rangeValue(attribute(node, kAXSelectedTextRangeAttribute))
-        let marker = attribute(node, "AXSelectedTextMarkerRange")
+        let range: NSRange?
+        let multipleRanges: CFTypeRef?
+        do { range = try AXSelectionRange.read(node); multipleRanges = nil }
+        catch AccessibilityCaptureError.disjointSelection {
+            // A read-only selection may be segmented (e.g. document lines). Explain the
+            // actual selected text without inventing a contiguous context or edit address.
+            range = nil; multipleRanges = attribute(node, kAXSelectedTextRangesAttribute)
+        }
+        let marker = multipleRanges == nil ? attribute(node, "AXSelectedTextMarkerRange") : nil
         let markerText = marker.flatMap { parameter(node, "AXStringForTextMarkerRange", $0) as? String }
         let raw = markerText ?? attribute(node, kAXSelectedTextAttribute) as? String
             ?? range.flatMap { rangeArgument($0).flatMap { parameter(node, kAXStringForRangeParameterizedAttribute, $0) as? String } }
@@ -149,7 +154,7 @@ public final class MacOSReadingSelectionReader {
         }
         let capture = ReadingCapture(id: UUID(), applicationIdentifier: identifier, scope: scope, anchor: anchor)
         return Source(capture: capture, element: node, focus: focus, window: window,
-                      pid: pid, marker: marker, range: range, rawSelection: raw)
+                      pid: pid, marker: marker, multipleRanges: multipleRanges, range: range, rawSelection: raw)
     }
 
     /// Text markers are opaque. Use the system's marker endpoints and WebKit's advertised
@@ -187,6 +192,13 @@ public final class MacOSReadingSelectionReader {
         range.location <= text.utf16.count && range.length <= text.utf16.count - range.location
             && Range(range, in: text) != nil && (text as NSString).substring(with: range) == selection
     }
+    private func sameValue(_ lhs: CFTypeRef?, _ rhs: CFTypeRef?) -> Bool {
+        switch (lhs, rhs) {
+        case (nil, nil): return true
+        case (.some(let lhs), .some(let rhs)): return CFEqual(lhs, rhs)
+        default: return false
+        }
+    }
     private func attribute(_ element: AXUIElement, _ name: String) -> CFTypeRef? {
         AXUIElementSetMessagingTimeout(element, 0.08)
         var value: CFTypeRef?
@@ -203,14 +215,6 @@ public final class MacOSReadingSelectionReader {
     private func rangeArgument(_ range: NSRange) -> AXValue? {
         var value = CFRange(location: range.location, length: range.length)
         return AXValueCreate(.cfRange, &value)
-    }
-    private func rangeValue(_ value: CFTypeRef?) -> NSRange? {
-        guard let value, CFGetTypeID(value) == AXValueGetTypeID() else { return nil }
-        let ax = value as! AXValue
-        var range = CFRange()
-        guard AXValueGetType(ax) == .cfRange, AXValueGetValue(ax, .cfRange, &range),
-              range.location >= 0, range.length >= 0, range.length <= Int.max - range.location else { return nil }
-        return NSRange(location: range.location, length: range.length)
     }
     private func rectValue(_ value: CFTypeRef?) -> CGRect? {
         guard let value, CFGetTypeID(value) == AXValueGetTypeID() else { return nil }

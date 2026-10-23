@@ -272,6 +272,10 @@ private final class LingoMendDelegate: NSObject, NSApplicationDelegate {
                     if !registered { feedback("接受快捷键冲突；可点击候选上的接受") }
                 }
             } catch is CancellationError { }
+            catch AccessibilityCaptureError.disjointSelection {
+                logFailure(AccessibilityCaptureError.disjointSelection)
+                if epoch == token { feedback("当前有多个选区或光标；请只保留一个连续选区或光标后再求助") }
+            }
             catch AccessibilityCaptureError.permissionRequired {
                 logFailure(AccessibilityCaptureError.permissionRequired)
                 if epoch == token { feedback("需要辅助功能权限；从 LM 菜单手动开启") }
@@ -358,6 +362,8 @@ private final class LingoMendDelegate: NSObject, NSApplicationDelegate {
                 }
                 if case AccessibilityCaptureError.permissionRequired = error {
                     feedback("需要辅助功能权限；从 LM 菜单手动开启")
+                } else if case AccessibilityCaptureError.disjointSelection = error {
+                    feedback("请选择一个连续的词句范围，再按 ⌃⌥D")
                 } else if case ReadingScopeError.tooLong = error {
                     feedback("选区过长；请选择一个词、句子或不超过 1200 UTF-16 单位的短段落")
                 } else if error is CoachingProviderError || error is CredentialError {

@@ -9,7 +9,7 @@ speakers. Keep your existing input method, write what you can, and use Chinese
 for expression gaps. Ask for help with your current sentence; necessary English
 corrections preserve your meaning, opinions and voice. Learning opens on demand.
 
-## Status: T3 experience build (0.5.1 / build 8)
+## Status: T3 experience build (0.5.2 / build 9)
 
 The first T3 slice adds **Control-Option-D** read-only contextual explanations for
 accessible selections across apps. Selected words/phrases receive their meaning
@@ -33,6 +33,10 @@ exposing no attributed text. Editors own native undo and typing style. WeChat, N
 Safari, VS Code and Codex are compatibility targets, not a hardcoded product allowlist.
 Actual app-specific behavior is pending user experience; inaccessible custom controls
 may still need adapters. Accepting a chat draft never generates a Return/send action.
+Single-selection controls exposing only the plural AX range attribute are also supported.
+Writing refuses multiple selections/carets before requesting or accepting a proposal.
+Read-only document capture can use the focused window when no editable focus exists;
+segmented selections retain their actual selected text without inventing one contiguous context.
 
 The TextEdit baseline and shared writing behavior include:
 
