@@ -44,7 +44,7 @@ private struct SentenceCandidateView: View {
             HStack {
                 Text(proposal.label).font(.system(size: 13, weight: .semibold))
                 Spacer()
-                Text(proposal.scope.target.kind == .explicitSelection ? "只改选区" : "当前句子")
+                Text(proposal.scope.isPassage ? "所选短段落" : proposal.scope.target.kind == .explicitSelection ? "只改选区" : "当前句子")
                     .font(.caption).foregroundStyle(.secondary)
             }
             ScrollView {
@@ -61,7 +61,9 @@ private struct SentenceCandidateView: View {
                 }.frame(maxWidth: .infinity, alignment: .leading)
             }
             HStack {
-                Text("明确接受才写回 · ⌘Z 原生撤销").font(.system(size: 10)).foregroundStyle(.secondary)
+                Text(proposal.snapshot.applicationIdentifier == "com.apple.TextEdit"
+                    ? "明确接受才写回 · ⌘Z 撤销" : "原生粘贴 · 样式与撤销由编辑器处理")
+                    .font(.system(size: 10)).foregroundStyle(.secondary)
                 Spacer()
                 Button("取消", action: onDismiss).buttonStyle(.plain).font(.caption)
                 if proposal.advice.status == .suggest {

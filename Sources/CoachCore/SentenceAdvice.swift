@@ -10,23 +10,28 @@ public enum SentenceIntent: String, Codable, Sendable {
 public enum SentenceAdviceStatus: String, Codable, Sendable { case suggest, unchanged, clarify, unsupported }
 
 public enum SentenceInputError: Error, Equatable, Sendable { case unsupported }
+public enum WritingExtent: String, Codable, Sendable { case sentence, selectedPassage = "selected_passage" }
 
-/// All fields describe one complete sentence. Left/right are immutable outside the selected target.
+/// A sentence or explicitly selected short passage. Left/right are immutable context.
 public struct SentenceRequest: Codable, Equatable, Sendable {
     public let target: String
     public let left: String
     public let right: String
     public let intent: SentenceIntent
+    public let extent: WritingExtent
     public var sentence: String { left + target + right }
     public var isSelection: Bool { !left.isEmpty || !right.isEmpty }
 
-    public init(target: String, left: String = "", right: String = "") throws {
-        self.target = target; self.left = left; self.right = right
+    public init(target: String, left: String = "", right: String = "", extent: WritingExtent = .sentence) throws {
+        self.target = target; self.left = left; self.right = right; self.extent = extent
         guard !target.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { throw CoachingProviderError.emptyInput }
-        guard (left + target + right).utf16.count <= 600 else { throw CoachingProviderError.inputTooLarge }
+        guard (left + target + right).utf16.count <= (extent == .sentence ? 600 : 1_200),
+              extent != .selectedPassage || (left.isEmpty && right.isEmpty) else { throw CoachingProviderError.inputTooLarge }
         let sentence = left + target + right
-        guard !sentence.contains(where: { $0.isNewline }),
-              !sentence.unicodeScalars.contains(where: { CharacterSet.controlCharacters.contains($0) }),
+        guard extent != .sentence || !sentence.contains(where: { $0.isNewline }),
+              !sentence.unicodeScalars.contains(where: {
+                  CharacterSet.controlCharacters.contains($0) && !(extent == .selectedPassage && ($0 == "\n" || $0 == "\r"))
+              }),
               sentence.range(of: #"https?://|www\.|[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}|[`{}=<>]"#, options: .regularExpression) == nil
         else { throw SentenceInputError.unsupported }
         let han = target.range(of: #"\p{Han}"#, options: .regularExpression) != nil
@@ -37,7 +42,7 @@ public struct SentenceRequest: Codable, Equatable, Sendable {
 
     public func validate() throws {
         // Reconstruct rather than trust a decoded intent or limits.
-        let checked = try Self(target: target, left: left, right: right)
+        let checked = try Self(target: target, left: left, right: right, extent: extent)
         guard checked.intent == intent else { throw CoachingProviderError.invalidResponse }
     }
 }
@@ -62,14 +67,21 @@ public struct SentenceAdvice: Codable, Equatable, Sendable {
             }
             return
         }
-        guard !replacement.isEmpty, replacement != request.target, replacement.utf16.count <= 900,
-              !replacement.contains(where: { $0.isNewline }), !replacement.contains("`"),
+        guard !replacement.isEmpty, replacement != request.target,
+              replacement.utf16.count <= (request.extent == .sentence ? 900 : 1_800),
+              request.extent != .sentence || !replacement.contains(where: { $0.isNewline }), !replacement.contains("`"),
               replacement.range(of: #"https?://|[`{}=<>]"#, options: .regularExpression) == nil,
               replacement.range(of: "[A-Za-z]", options: .regularExpression) != nil,
               !replacement.unicodeScalars.contains(where: {
-                  CharacterSet.controlCharacters.contains($0) || $0.properties.generalCategory == .format
+                  (CharacterSet.controlCharacters.contains($0) && !(request.extent == .selectedPassage && ($0 == "\n" || $0 == "\r")))
+                      || $0.properties.generalCategory == .format
               }) else { throw CoachingProviderError.invalidResponse }
         let result = request.left + replacement + request.right
+        if request.extent == .selectedPassage {
+            guard matches(#"\r\n|\r|\n"#, in: request.target).count == matches(#"\r\n|\r|\n"#, in: replacement).count else {
+                throw CoachingProviderError.invalidResponse
+            }
+        }
         let left = request.left.trimmingCharacters(in: .whitespacesAndNewlines)
         let right = request.right.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !(left.split(separator: " ").count >= 2 && replacement.hasPrefix(left)),

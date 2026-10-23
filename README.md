@@ -9,7 +9,7 @@ speakers. Keep your existing input method, write what you can, and use Chinese
 for expression gaps. Ask for help with your current sentence; necessary English
 corrections preserve your meaning, opinions and voice. Learning opens on demand.
 
-## Status: T3 in development (0.5.0)
+## Status: T3 experience build (0.5.1 / build 8)
 
 The first T3 slice adds **Control-Option-D** read-only contextual explanations for
 accessible selections across apps. Selected words/phrases receive their meaning
@@ -21,10 +21,20 @@ are targets; scanned PDFs require OCR and are outside this stage.
 Enable other-app access explicitly in settings. Requests reuse your endpoint,
 Keychain credential and network switch: selection ≤1200 UTF-16 units, total context
 ≤2000; 1400 output tokens / 20 seconds. No clipboard-based capture or read-only edits.
-See [reading experience steps](docs/t3-reading-experience.md). Real-app compatibility
-remains a user-experience check; global writing/short paragraphs are the next T3 slice.
+See [global experience steps](docs/t3-global-experience.md). Real-app compatibility
+remains a user-experience check.
 
-The current build delivers sentence advice and explicit native acceptance in TextEdit:
+**Control-Option-L** writing now uses actual editable-control capabilities across
+opted-in apps. Caret requests remain current-sentence scoped; explicit selections
+can include a short passage (≤1200 UTF-16 units, replacement ≤1800). Paragraph breaks
+and the existing mechanical meaning checks are preserved. Acceptance uses the same
+guarded native paste, with attributed runs when available and plain text for controls
+exposing no attributed text. Editors own native undo and typing style. WeChat, Notes,
+Safari, VS Code and Codex are compatibility targets, not a hardcoded product allowlist.
+Actual app-specific behavior is pending user experience; inaccessible custom controls
+may still need adapters. Accepting a chat draft never generates a Return/send action.
+
+The TextEdit baseline and shared writing behavior include:
 
 - Explicit **Control-Option-L** help; quiet background operation with no automatic generation.
 - Local current-sentence boundaries, including common abbreviations, decimals,
@@ -36,15 +46,15 @@ The current build delivers sentence advice and explicit native acceptance in Tex
   expression, unchanged feedback and clarification outcomes.
 - DeepSeek Chat Completions with a configurable endpoint/model and a BYOK
   credential stored in macOS Keychain. Networking is off by default.
-- Requests include one sentence as target/left/right plus an intent hint, at most
-  600 UTF-16 units total. Oversized sentences are rejected, not silently truncated.
+- Requests include target/left/right and intent/extent hints. Current sentences use
+  at most 600 UTF-16 units; explicitly selected short passages use at most 1200.
 - JSON validation, bounded output, non-thinking mode, deadline/cancellation,
   short-lived memory caching and cooldowns. No automatic retries.
 - Structural and mechanical preservation checks for numbers, selected units,
   uppercase terms, modality anchors and literal quotations.
 - Without networking, documented fixtures support range testing. API failures
   never silently fall back to these fixtures.
-- TextEdit AX observation is active only during a requested operation/preview,
+- Source-app AX observation is active only during a requested operation/preview,
   to invalidate changed input or focus. It never schedules another model request.
 - Explicit **Control-Option-Return** or candidate-button acceptance; **Escape** or
   **Control-Option-Period** cancellation. Ordinary Return/Tab are not intercepted.
@@ -54,7 +64,8 @@ The current build delivers sentence advice and explicit native acceptance in Tex
   ownership-checked restoration, refusal for unmaterializable/oversized data.
   Third-party clipboard history/sync may retain temporary contents.
 - AX attributed-text conversion and local run preservation for basic fonts,
-  bold/italic, colors and underline. Unsupported format refuses, without a plain-text fallback.
+  bold/italic, colors and underline. Exposed unsupported rich formats refuse;
+  TextEdit keeps its strict attributed-text contract.
 - Single native editor undo tested in an isolated NSTextView. Actual TextEdit
   cross-process paste, undo and formatting remain user-acceptance checks.
 - Selected-text explanations are available through Control-Option-D; learning collections remain later work.
@@ -128,8 +139,8 @@ See the [staged development plan](docs/development-stages.md). Each stage ends
 with tests/build, Conventional Commits and a normal remote push, a report and
 user test steps. Work stops for feedback before proceeding to the next stage.
 
-Next within T3: capability-driven global writing and selected short paragraphs,
-then user experience of editing/undo and reading in the target apps.
+Next within T3: user experience of global editing/undo and contextual reading in
+the target apps, with focused adapters for any controls that do not expose standard AX capabilities.
 
 ## License
 

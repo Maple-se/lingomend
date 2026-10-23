@@ -35,7 +35,8 @@ public struct SentenceProposal: Sendable {
               let range = Range(NSRange(location: offset, length: scope.target.range.length), in: scope.context.text),
               String(scope.context.text[range]) == scope.target.text else { throw SentenceScopeError.invalidRange }
         return try SentenceRequest(target: scope.target.text,
-            left: String(scope.context.text[..<range.lowerBound]), right: String(scope.context.text[range.upperBound...]))
+            left: String(scope.context.text[..<range.lowerBound]), right: String(scope.context.text[range.upperBound...]),
+            extent: scope.isPassage ? .selectedPassage : .sentence)
     }
 
     public init(snapshot: TextSnapshot, scope: SentenceScope, advice: SentenceAdvice) throws {

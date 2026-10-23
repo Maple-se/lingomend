@@ -29,13 +29,13 @@ public struct DeepSeekSentenceProvider: SentenceAdvising {
             throw CoachingProviderError.invalidConfiguration
         }
         let payload: [String: String] = ["target": input.target, "left": input.left, "right": input.right,
-            "intent_hint": input.intent.rawValue]
+            "intent_hint": input.intent.rawValue, "extent": input.extent.rawValue]
         let encoded = try JSONSerialization.data(withJSONObject: payload)
         let body: [String: Any] = [
             "model": configuration.model.trimmingCharacters(in: .whitespacesAndNewlines),
             "thinking": ["type": "disabled"], "stream": false, "temperature": 0.2,
-            "max_tokens": 640, "response_format": ["type": "json_object"],
-            "messages": [["role": "system", "content": Self.prompt],
+            "max_tokens": input.extent == .sentence ? 640 : 1_400, "response_format": ["type": "json_object"],
+            "messages": [["role": "system", "content": Self.prompt + (input.extent == .selectedPassage ? Self.passagePrompt : "")],
                          ["role": "user", "content": String(decoding: encoded, as: UTF8.self)]]
         ]
         var request = URLRequest(url: try configuration.endpoint(), timeoutInterval: 15)
@@ -45,6 +45,18 @@ public struct DeepSeekSentenceProvider: SentenceAdvising {
         request.httpBody = try JSONSerialization.data(withJSONObject: body)
         return request
     }
+
+    static let passagePrompt = """
+
+    This request has extent=selected_passage. The author explicitly selected a short
+    passage, potentially with multiple sentences or line breaks. Treat target as the entire
+    authorized passage, with no unseen surrounding text. The one-sentence/one-line limits
+    above are replaced by: preserve its paragraph breaks and sentence order; return only
+    the edited passage, max 1800 UTF-16 units. Apply the same minimal necessary changes,
+    keeping all facts, voice, uncertainty, numbers, technical terms and literal quotations.
+    Never add new points, reasons, conclusions or a generic AI style. Do not expand beyond
+    what the selected text says. Clarify if a fragment needs unavailable outside context.
+    """
 
     static let prompt = """
     You are LingoMend, a quiet English expression companion. Help the author express
@@ -91,6 +103,8 @@ public struct DemoSentenceProvider: SentenceAdvising {
     public func advice(_ request: SentenceRequest) async throws -> SentenceAdvice {
         try Task.checkCancellation(); try request.validate()
         let examples: [String: String] = [
+            "I very like 这个方案. This works 轻载条件下.": "I really like this approach. This works under light-load conditions.",
+            "I very like 这个方案.\nThis works 轻载条件下.": "I really like this approach.\nThis works under light-load conditions.",
             "This works 轻载条件下.": "This works under light-load conditions.",
             "I am 负责 this project.": "I am responsible for this project.",
             "I very like 这个方案.": "I really like this approach.",

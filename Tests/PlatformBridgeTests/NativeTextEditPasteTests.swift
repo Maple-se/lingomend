@@ -23,6 +23,8 @@ private final class TestPasteDriver: NativePasteDriving {
   var selectionFails = false
   var refuseEvent = false
   var formatFails = false
+  var plain = false
+  var app = "com.apple.TextEdit"
   init(board: NSPasteboard, text: String) {
     self.board = board
     view.isRichText = true
@@ -36,12 +38,21 @@ private final class TestPasteDriver: NativePasteDriving {
     captures += 1
     onCapture?(captures)
     return TextSnapshot(
-      applicationIdentifier: "com.apple.TextEdit", focusedElementIdentifier: field,
+      applicationIdentifier: app, focusedElementIdentifier: field,
       text: view.string, selectedRange: view.selectedRange(), revisionToken: view.string)
   }
   func attributedTarget(_ range: NSRange) throws -> NSAttributedString {
     if formatFails { throw NativePasteError.formatUnavailable }
     return view.textStorage!.attributedSubstring(from: range)
+  }
+  func preparePaste(_ plan: SentenceEditPlan) throws -> NativePastePayload {
+    if plain { return NativePastePayload() }
+    let source = try attributedTarget(plan.scope.target.range)
+    guard source.string == plan.scope.target.text else { throw NativePasteError.stale(.sourceChanged) }
+    let rich = try BasicRichText.replacement(source: source, text: plan.replacement)
+      .attributedSubstring(from: plan.replacementRange)
+    return try NativePastePayload(rtf: rich.data(from: NSRange(location: 0, length: rich.length),
+      documentAttributes: [.documentType: NSAttributedString.DocumentType.rtf]))
   }
   func select(_ range: NSRange) throws {
     if selectionFails { throw NativePasteError.selectionFailed }
@@ -63,6 +74,43 @@ private final class PasteEventSpy: DiagnosticRecording, @unchecked Sendable {
 }
 
 final class NativeTextEditPasteTests: XCTestCase {
+  @MainActor func testGenericPlainInputRefusesChangedFocusBeforePaste() async throws {
+    let board = NSPasteboard(name: NSPasteboard.Name("lingomend-plain-focus-\(UUID())"))
+    defer { board.releaseGlobally() }
+    board.clearContents(); board.setString("BEFORE", forType: .string)
+    let driver = TestPasteDriver(board: board, text: "I very like 这个方案.")
+    driver.app = "synthetic.generic.editor"; driver.plain = true
+    let original = try driver.capture()
+    let plan = try SentenceEditPlan(original: original, scope: WritingScopeResolver().resolve(original),
+      replacement: "I really like this approach.")
+    driver.onCapture = { count in if count == 3 { driver.field = "different-input" } }
+    let writer = NativeTextPaste(driver: driver, clipboard: NativeClipboardLease(board: board))
+    do { _ = try await writer.accept(plan); XCTFail("Expected stale refusal") }
+    catch { XCTAssertEqual(error as? NativePasteError, .stale(.focusChanged)) }
+    XCTAssertEqual(driver.pastes, 0)
+    XCTAssertEqual(driver.view.string, original.text)
+    XCTAssertEqual(board.string(forType: .string), "BEFORE")
+  }
+  @MainActor func testGenericPlainInputNativePasteUndoAndClipboardRestore() async throws {
+    let board = NSPasteboard(name: NSPasteboard.Name("lingomend-plain-test-\(UUID())"))
+    defer { board.releaseGlobally() }
+    board.clearContents(); board.setString("ORIGINAL_CLIPBOARD", forType: .string)
+    let driver = TestPasteDriver(board: board, text: "I very like 这个方案.\nThis works 轻载条件下.")
+    driver.app = "synthetic.generic.editor"; driver.plain = true; driver.view.isRichText = false
+    driver.view.setSelectedRange(NSRange(location: 0, length: driver.view.string.utf16.count))
+    let original = try driver.capture()
+    let plan = try SentenceEditPlan(original: original, scope: WritingScopeResolver().resolve(original),
+      replacement: "I really like this approach.\nThis works under light-load conditions.")
+    let writer = NativeTextPaste(driver: driver, clipboard: NativeClipboardLease(board: board))
+    let result = try await writer.accept(plan)
+    XCTAssertEqual(driver.pastes, 1)
+    XCTAssertEqual(driver.view.string, plan.expectedText)
+    XCTAssertTrue(result.caretPositioned)
+    XCTAssertEqual(result.clipboard, .restored)
+    XCTAssertEqual(board.string(forType: .string), "ORIGINAL_CLIPBOARD")
+    driver.view.localUndo.undo()
+    XCTAssertEqual(driver.view.string, original.text)
+  }
   @MainActor private func fixture(
     _ text: String = "First stays. This works 轻载条件下.",
     replacement: String = "This works under light-load conditions.",

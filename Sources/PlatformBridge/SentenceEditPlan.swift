@@ -16,14 +16,14 @@ public struct SentenceEditPlan: Equatable, Sendable {
   public let expectedText: String
   public let caretAfter: NSRange
 
-  public init(original: TextSnapshot, scope: SentenceScope, replacement: String) throws {
-    guard original.applicationIdentifier == "com.apple.TextEdit" else {
-      throw SentenceEditError.unsupportedApplication
-    }
-    guard try SentenceScopeResolver().resolve(original) == scope,
-      !replacement.isEmpty, replacement.utf16.count <= 900,
+  public init(original: TextSnapshot, scope: SentenceScope, replacement: String,
+              preserveExplicitSelection: Bool = false) throws {
+    guard !original.applicationIdentifier.isEmpty, !original.focusedElementIdentifier.isEmpty,
+      try WritingScopeResolver().resolve(original) == scope,
+      !replacement.isEmpty, replacement.utf16.count <= (scope.isPassage ? 1_800 : 900),
       !replacement.unicodeScalars.contains(where: {
-        CharacterSet.controlCharacters.contains($0) || $0.properties.generalCategory == .format
+        (CharacterSet.controlCharacters.contains($0) && !(scope.isPassage && ($0 == "\n" || $0 == "\r")))
+          || $0.properties.generalCategory == .format
       })
     else { throw SentenceEditError.invalidPlan }
     guard scope.target.text != replacement else { throw SentenceEditError.unchanged }
@@ -35,6 +35,12 @@ public struct SentenceEditPlan: Equatable, Sendable {
     while suffix < min(before.count, after.count) - prefix,
       before[before.count - suffix - 1] == after[after.count - suffix - 1]
     { suffix += 1 }
+    if preserveExplicitSelection {
+      guard scope.target.kind == .explicitSelection, original.selectedRange == scope.target.range else {
+        throw SentenceEditError.invalidPlan
+      }
+      prefix = 0; suffix = 0
+    }
     // An empty clipboard payload is not a reliable native deletion. Include one
     // unchanged neighbour inside the authorized target so paste still has text.
     if after.count - prefix - suffix == 0 {

@@ -8,8 +8,25 @@ public protocol NativePasteDriving: AnyObject {
   var modifiersReleased: Bool { get }
   func capture() throws -> TextSnapshot
   func attributedTarget(_ range: NSRange) throws -> NSAttributedString
+  func preparePaste(_ plan: SentenceEditPlan) throws -> NativePastePayload
   func select(_ range: NSRange) throws
   func postPaste() throws
+}
+
+public struct NativePastePayload: Sendable {
+  public let rtf: Data?
+  public init(rtf: Data? = nil) { self.rtf = rtf }
+}
+
+public extension NativePasteDriving {
+  func preparePaste(_ plan: SentenceEditPlan) throws -> NativePastePayload {
+    let source = try attributedTarget(plan.scope.target.range)
+    guard source.string == plan.scope.target.text else { throw NativePasteError.stale(.sourceChanged) }
+    let rich = try BasicRichText.replacement(source: source, text: plan.replacement)
+      .attributedSubstring(from: plan.replacementRange)
+    return try NativePastePayload(rtf: rich.data(from: NSRange(location: 0, length: rich.length),
+      documentAttributes: [.documentType: NSAttributedString.DocumentType.rtf]))
+  }
 }
 
 public struct NativePasteResult: Sendable {
@@ -63,15 +80,7 @@ public final class NativeTextEditPaste {
     try check(plan, current: driver.capture())
     diagnostics.record(DiagnosticEvent(.preflightPassed, stage: .preflight), operation: operation)
     progress.stage = .format
-    let source = try driver.attributedTarget(plan.scope.target.range)
-    guard source.string == plan.scope.target.text else {
-      throw NativePasteError.stale(.sourceChanged)
-    }
-    let rich = try BasicRichText.replacement(source: source, text: plan.replacement)
-      .attributedSubstring(from: plan.replacementRange)
-    let rtf = try rich.data(
-      from: NSRange(location: 0, length: rich.length),
-      documentAttributes: [.documentType: NSAttributedString.DocumentType.rtf])
+    let payload = try driver.preparePaste(plan)
     diagnostics.record(DiagnosticEvent(.formatPrepared, stage: .format), operation: operation)
     // The acceptance shortcut may still be physically held. Never issue Cmd-V with
     // Ctrl/Option/Shift held, and never synthesize their key-up events for the user.
@@ -84,7 +93,7 @@ public final class NativeTextEditPaste {
     try Task.checkCancellation()
     try check(plan, current: driver.capture())
     progress.stage = .clipboard
-    try clipboard.begin(rtf: rtf, text: plan.insertedText)
+    try clipboard.begin(rtf: payload.rtf, text: plan.insertedText)
     diagnostics.record(DiagnosticEvent(.clipboardBorrowed, stage: .clipboard), operation: operation)
     var dispatched = false
     do {
@@ -189,7 +198,7 @@ public final class NativeTextEditPaste {
 }
 
 @MainActor
-public final class MacOSTextEditPasteDriver: NativePasteDriving {
+public final class MacOSNativePasteDriver: NativePasteDriving {
   private let reader: MacOSAccessibilityTextReader
   private var element: AXUIElement?
   private var pid: pid_t = 0
@@ -201,7 +210,7 @@ public final class MacOSTextEditPasteDriver: NativePasteDriving {
   }
   public func capture() throws -> TextSnapshot {
     let snapshot = try reader.captureFocusedText()
-    guard snapshot.applicationIdentifier == "com.apple.TextEdit",
+    guard reader.capabilities?.editable == true,
       let focused = reader.capturedElement,
       AXUIElementGetPid(focused, &pid) == .success,
       NSWorkspace.shared.frontmostApplication?.processIdentifier == pid
@@ -210,6 +219,22 @@ public final class MacOSTextEditPasteDriver: NativePasteDriving {
     }
     element = focused
     return snapshot
+  }
+  public func preparePaste(_ plan: SentenceEditPlan) throws -> NativePastePayload {
+    // TextEdit's existing formatting contract remains strict. Other native controls use
+    // attributed runs if available; controls exposing only text receive a text-only paste,
+    // inheriting the editor's typing style. No Return key or send action is ever dispatched.
+    let source: NSAttributedString
+    do { source = try attributedTarget(plan.scope.target.range) }
+    catch NativePasteError.formatUnavailable {
+      guard plan.original.applicationIdentifier != "com.apple.TextEdit" else { throw NativePasteError.formatUnavailable }
+      return NativePastePayload()
+    }
+    guard source.string == plan.scope.target.text else { throw NativePasteError.stale(.sourceChanged) }
+    let rich = try BasicRichText.replacement(source: source, text: plan.replacement)
+      .attributedSubstring(from: plan.replacementRange)
+    return try NativePastePayload(rtf: rich.data(from: NSRange(location: 0, length: rich.length),
+      documentAttributes: [.documentType: NSAttributedString.DocumentType.rtf]))
   }
   public func attributedTarget(_ range: NSRange) throws -> NSAttributedString {
     guard let element else { throw NativePasteError.formatUnavailable }
@@ -230,6 +255,10 @@ public final class MacOSTextEditPasteDriver: NativePasteDriving {
   }
   public func select(_ range: NSRange) throws {
     guard let element else { throw NativePasteError.selectionFailed }
+    let current = try reader.captureFocusedText()
+    guard let focused = reader.capturedElement, CFEqual(focused, element),
+      NSWorkspace.shared.frontmostApplication?.processIdentifier == pid else { throw NativePasteError.selectionFailed }
+    if current.selectedRange == range { return }
     var settable = DarwinBoolean(false)
     guard
       AXUIElementIsAttributeSettable(element, kAXSelectedTextRangeAttribute as CFString, &settable)
@@ -261,3 +290,7 @@ public final class MacOSTextEditPasteDriver: NativePasteDriving {
     up.postToPid(pid)
   }
 }
+
+/// Source-compatible names for the T2 baseline and its existing tests.
+public typealias MacOSTextEditPasteDriver = MacOSNativePasteDriver
+public typealias NativeTextPaste = NativeTextEditPaste

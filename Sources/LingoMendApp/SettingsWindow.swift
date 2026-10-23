@@ -32,18 +32,18 @@ private struct SettingsView: View {
     var body: some View {
         ScrollView {
             Form {
-                Section("按需表达帮助 · TextEdit T2") {
-                    Text("后台安静运行。在 TextEdit 按 ⌃⌥L：无选区读取当前句，有选区用所在句理解并限制在选区内。先看建议和变化，明确接受才修改原文。")
+                Section("全局按需求助 · T3") {
+                    Text("后台安静运行。可编辑区域按 ⌃⌥L：无选区处理当前句；选词句时结合所在句；明确选中短段落时只处理所选内容。先看建议和变化，明确接受才修改原文。")
                         .font(.caption).foregroundStyle(.secondary)
                     appToggle("TextEdit", id: "com.apple.TextEdit")
-                    Toggle("允许其他应用的按需读取（T3）", isOn: $preferences.globalAccessEnabled)
+                    Toggle("允许其他应用的按需求助", isOn: $preferences.globalAccessEnabled)
                     Text("⌃⌥D：选中英文词句，查看语境含义。开启后可在其他应用的可访问选区使用；不会后台扫描，不使用复制来读取，不修改只读文本。")
                         .font(.caption).foregroundStyle(.secondary)
-                    Text("⌃⌥↩ 接受；Esc / ⌃⌥. 取消。在 TextEdit 用 ⌘Z 原生撤销。输入或焦点变化使候选失效；不接管普通 Return、Tab 或输入法组词键。")
+                    Text("⌃⌥↩ 接受；Esc / ⌃⌥. 取消。原编辑器用 ⌘Z 撤销。输入或焦点变化使候选失效；普通 Return、Tab 和输入法组词键保持原来的行为。聊天输入框接受时只粘贴，不发送消息。")
                         .font(.caption)
                     Text("接受时临时借用系统剪贴板执行一次原生粘贴，保存原内容并在仍属本次操作时恢复；检测到新复制内容则保留它。无法保存剪贴板或保持格式时拒绝粘贴。剪贴板历史工具可能记录临时内容。")
                         .font(.caption).foregroundStyle(.secondary)
-                    Text("本轮支持字体、字号、粗体、斜体、颜色与下划线等基础样式；附件、链接及复杂布局不在支持范围。真实 TextEdit 的写回、撤销和格式保持需试用验收。按需学习在 T3 接入。")
+                    Text("可访问的基础富文本保留字体、字号、粗斜体、颜色等样式；仅提供文本的控件使用纯文本粘贴，样式由编辑器处理。附件、链接和复杂布局需保留在选区外。应用实际兼容性由试用确认。")
                         .font(.caption).foregroundStyle(.secondary)
                 }
                 Section("建议服务") {
@@ -55,13 +55,13 @@ private struct SettingsView: View {
                         }
                     }
                     Toggle("使用配置的模型服务（否则仅本地固定演示）", isOn: $preferences.networkEnabled)
-                    Text("保存并开启后，⌃⌥L 发送当前句（最多 600 个 UTF-16 单位）；⌃⌥D 发送选中词句（最多 1200）及实际取得的附近语境（合计最多 2000）。系统桥接在本地可能读取控件文本再定位句子。不发送整篇、路径、应用身份或历史；不主动联网分析。")
+                    Text("保存并开启后，⌃⌥L 发送当前句（最多 600 个 UTF-16 单位），或明确选中的短段落（最多 1200）；⌃⌥D 发送选中词句（最多 1200）及实际取得的附近语境（合计最多 2000）。系统桥接在本地可能读取控件文本再定位句子。不发送整篇、路径、应用身份或历史；不主动联网分析。")
                         .font(.caption).foregroundStyle(.secondary)
                     TextField("API Base URL", text: $preferences.provider.baseURL)
                     TextField("模型 ID", text: $preferences.provider.model)
                     SecureField("新 API Key（留空保留已有）", text: $key)
                     Toggle("删除此地址的已存密钥", isOn: $removeKey)
-                    Text("JSON object · 关闭思考\n句子建议 640 tokens / 15 秒；语境解释 1400 tokens / 20 秒。\n按需请求，不自动重试；每次触发可能产生费用。当前使用 DeepSeek 参数。")
+                    Text("JSON object · 关闭思考\n句子建议 640 tokens、选段建议 1400 tokens / 15 秒；语境解释 1400 tokens / 20 秒。\n按需请求，不自动重试；每次触发可能产生费用。当前使用 DeepSeek 参数。")
                         .font(.caption).foregroundStyle(.secondary)
                     Text("密钥存入 macOS 钥匙串，按服务地址隔离；设置文件不包含密钥。")
                         .font(.caption).foregroundStyle(.secondary)

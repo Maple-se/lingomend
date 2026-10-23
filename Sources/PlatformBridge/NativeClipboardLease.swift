@@ -19,7 +19,7 @@ public final class NativeClipboardLease {
     return board.changeCount == ownedChangeCount && board.data(forType: Self.markerType) == token
   }
 
-  public func begin(rtf: Data, text: String) throws {
+  public func begin(rtf: Data? = nil, text: String) throws {
     guard saved == nil else { throw NativePasteError.busy }
     let count = board.changeCount
     let items = board.pasteboardItems ?? []
@@ -48,7 +48,7 @@ public final class NativeClipboardLease {
     guard board.changeCount == count else { throw NativePasteError.clipboardChanged }
     let token = Data(UUID().uuidString.utf8)
     let item = NSPasteboardItem()
-    guard item.setData(rtf, forType: .rtf), item.setString(text, forType: .string),
+    guard (rtf == nil || item.setData(rtf!, forType: .rtf)), item.setString(text, forType: .string),
       item.setData(token, forType: Self.markerType)
     else { throw NativePasteError.clipboardUnavailable }
     saved = snapshot

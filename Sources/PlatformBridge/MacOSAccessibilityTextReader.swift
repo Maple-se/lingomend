@@ -36,6 +36,7 @@ public final class MacOSAccessibilityTextReader: FocusedTextReading, SafeTextRep
     public var allowedApplications: Set<String>?
     private var previousElement: AXUIElement?
     private var previousElementIdentifier: String?
+    public private(set) var capabilities: EditorCapabilities?
 
     public init() {}
 
@@ -80,6 +81,7 @@ public final class MacOSAccessibilityTextReader: FocusedTextReading, SafeTextRep
         if let allowedApplications, !allowedApplications.contains(appIdentifier) {
             throw AccessibilityCaptureError.applicationNotAllowed
         }
+        guard pid != ProcessInfo.processInfo.processIdentifier else { throw AccessibilityCaptureError.applicationNotAllowed }
 
         var textValue: CFTypeRef?
         guard AXUIElementCopyAttributeValue(
@@ -144,6 +146,19 @@ public final class MacOSAccessibilityTextReader: FocusedTextReading, SafeTextRep
         }
         previousElement = focused
         previousElementIdentifier = elementIdentifier
+        func attribute(_ name: String) -> CFTypeRef? {
+            var value: CFTypeRef?
+            return AXUIElementCopyAttributeValue(focused, name as CFString, &value) == .success ? value : nil
+        }
+        func settable(_ name: String) -> Bool {
+            var value = DarwinBoolean(false)
+            return AXUIElementIsAttributeSettable(focused, name as CFString, &value) == .success && value.boolValue
+        }
+        capabilities = EditorCapabilities(role: attribute(kAXRoleAttribute) as? String ?? "",
+            enabled: (attribute(kAXEnabledAttribute) as? Bool) != false,
+            explicitlyEditable: attribute("AXEditable") as? Bool,
+            valueSettable: settable(kAXValueAttribute), selectedTextSettable: settable(kAXSelectedTextAttribute),
+            rangeSettable: settable(kAXSelectedTextRangeAttribute))
 
         // AX has no universal edit revision. This is a content fingerprint;
         // replacement must still compare the full source and focused element.

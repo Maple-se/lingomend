@@ -4,6 +4,10 @@ import Foundation
 public struct SentenceScope: Equatable, Sendable {
     public let context: ResolvedTextScope
     public let target: ResolvedTextScope
+    public let isPassage: Bool
+    public init(context: ResolvedTextScope, target: ResolvedTextScope, isPassage: Bool = false) {
+        self.context = context; self.target = target; self.isPassage = isPassage
+    }
 }
 
 public enum SentenceScopeError: Error, Equatable, Sendable {

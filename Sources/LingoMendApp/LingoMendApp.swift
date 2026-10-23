@@ -28,7 +28,7 @@ private final class LingoMendDelegate: NSObject, NSApplicationDelegate {
     private let panel = SentenceCandidatePanel()
     private let readingPanel = ReadingPanel()
     private let notice = RequestNotice()
-    private lazy var writer = NativeTextEditPaste(driver: MacOSTextEditPasteDriver(reader: reader), diagnostics: diagnostics.recorder)
+    private lazy var writer = NativeTextPaste(driver: MacOSNativePasteDriver(reader: reader), diagnostics: diagnostics.recorder)
     private let settingsWindow = SettingsWindow()
     private var preferences = AppPreferences.load()
     private var statusItem: NSStatusItem?
@@ -86,7 +86,7 @@ private final class LingoMendDelegate: NSObject, NSApplicationDelegate {
         if !readingRegistered { status.title = "⌃⌥D 注册失败；请检查快捷键冲突" }
         observer.onChange = { [weak self] in self?.checkObservedChange() }
         observer.onUnavailable = { [weak self] in self?.discardChangedPreview() }
-        reader.allowedApplications = ["com.apple.TextEdit"]
+        reader.allowedApplications = []
     }
     private var triggerRegistered = false
     private var readingRegistered = false
@@ -198,17 +198,15 @@ private final class LingoMendDelegate: NSObject, NSApplicationDelegate {
         invalidate(reason: .superseded)
         let operation = epoch
         diagnostics.recorder.record(DiagnosticEvent(.helpStarted), operation: operation)
-        guard NSWorkspace.shared.frontmostApplication?.bundleIdentifier == "com.apple.TextEdit" else {
+        guard let identifier = NSWorkspace.shared.frontmostApplication?.bundleIdentifier,
+              preferences.globalAccessEnabled || preferences.allowedApplications.contains(identifier) else {
             diagnostics.recorder.record(DiagnosticEvent(.helpFailed, outcome: .refused, reason: .applicationNotAllowed), operation: operation)
-            feedback("当前阶段请在 TextEdit 中使用 ⌃⌥L"); return
+            feedback("请在设置中允许其他应用的按需求助，或勾选 TextEdit"); return
         }
-        guard preferences.allowedApplications.contains("com.apple.TextEdit") else {
-            diagnostics.recorder.record(DiagnosticEvent(.helpFailed, outcome: .refused, reason: .applicationNotAllowed), operation: operation)
-            feedback("请在设置中勾选 TextEdit，允许按需读取"); return
-        }
+        reader.allowedApplications = [identifier]
         // Subscribe only while a requested operation is active, solely to invalidate it.
         // Initial callbacks occur before the task starts and never schedule model work.
-        observer.configure(enabled: true, allowedApplications: ["com.apple.TextEdit"])
+        observer.configure(enabled: true, allowedApplications: [identifier])
         let token = epoch
         feedback("正在识别当前表达…", persistent: true)
         registerCancellation()
@@ -235,8 +233,13 @@ private final class LingoMendDelegate: NSObject, NSApplicationDelegate {
                 try Task.checkCancellation()
                 guard epoch == token else { return }
                 activeSnapshot = snapshot
+                guard reader.capabilities?.canAccept(selection: snapshot.selectedRange) == true else {
+                    diagnostics.recorder.record(DiagnosticEvent(.helpFailed, outcome: .refused,
+                        reason: .unsupportedInput, stage: .capture), operation: token)
+                    feedback("此区域未提供可编辑范围；阅读请选中文字后按 ⌃⌥D"); return
+                }
                 stage = .scope
-                let scope = try SentenceScopeResolver().resolve(snapshot)
+                let scope = try WritingScopeResolver().resolve(snapshot)
                 diagnostics.recorder.record(DiagnosticEvent(.scopeResolved, stage: .scope,
                     scope: snapshot.selectedRange.length > 0 ? .selection : .currentSentence,
                     length: scope.target.text.utf16.count), operation: token)
@@ -277,8 +280,8 @@ private final class LingoMendDelegate: NSObject, NSApplicationDelegate {
                 guard epoch == token else { return }
                 switch error {
                 case .empty: feedback("当前表达为空；写一点内容后再求助")
-                case .multipleSentences: feedback("当前支持一句；请将光标放进一句或缩小选区")
-                case .tooLong: feedback("当前句超过 600 UTF-16 单位；请选择较短的独立句子")
+                case .multipleSentences: feedback("请明确选中需要帮助的短段落，或把光标放进一句")
+                case .tooLong: feedback("当前句超过 600 或选段超过 1200 UTF-16 单位；请缩小选区")
                 case .invalidRange: feedback("无法确认范围；请重新放置光标或选区")
                 }
             } catch SentenceInputError.unsupported {
@@ -372,7 +375,8 @@ private final class LingoMendDelegate: NSObject, NSApplicationDelegate {
         guard acceptance == nil, let proposal, proposal.advice.status == .suggest else { return }
         let plan: SentenceEditPlan
         let operation = epoch
-        do { plan = try SentenceEditPlan(original: proposal.snapshot, scope: proposal.scope, replacement: proposal.advice.replacement) }
+        do { plan = try SentenceEditPlan(original: proposal.snapshot, scope: proposal.scope,
+            replacement: proposal.advice.replacement, preserveExplicitSelection: reader.capabilities?.selectableRange == false) }
         catch {
             diagnostics.recorder.record(DiagnosticEvent(.acceptanceFailed, outcome: .refused,
                 reason: .invalidRange, stage: .preflight, dispatched: false), operation: operation)
@@ -391,9 +395,9 @@ private final class LingoMendDelegate: NSObject, NSApplicationDelegate {
                 let result = try await writer.accept(plan, operation: operation)
                 if result.clipboard == .failed { feedback("文本已更新，但剪贴板恢复失败；请检查剪贴板") }
                 else if !result.caretPositioned { feedback("文本已更新；光标位置未确认，请检查后继续写作") }
-                else { feedback("已接受 · 在 TextEdit 按 ⌘Z 可撤销") }
+                else { feedback("已接受 · 在原编辑器按 ⌘Z 可撤销") }
             } catch NativePasteError.resultUnconfirmed {
-                feedback("粘贴结果未确认；请检查原文，必要时在 TextEdit 按 ⌘Z。不会自动重试")
+                feedback("粘贴结果未确认；请检查原文，必要时在原编辑器按 ⌘Z。不会自动重试")
             } catch NativePasteError.clipboardRestorationFailed(let dispatched) {
                 feedback(dispatched ? "已发送粘贴，但剪贴板恢复失败；请检查原文和剪贴板"
                     : "未发送粘贴，但剪贴板恢复失败；请检查剪贴板")

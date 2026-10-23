@@ -111,8 +111,9 @@ final class SentenceEditPlanTests: XCTestCase {
     XCTAssertThrowsError(
       try SentenceEditPlan(original: original, scope: scope, replacement: scope.target.text))
     let other = snapshot(original.text, app: "com.apple.Safari")
-    XCTAssertThrowsError(
-      try SentenceEditPlan(original: other, scope: scope, replacement: "This works well."))
+    let global = try SentenceEditPlan(original: other, scope: scope, replacement: "This works well.")
+    XCTAssertNil(global.refusal(current: other))
+    XCTAssertEqual(global.refusal(current: original), .focusChanged)
     let forged = try SentenceScopeResolver().resolve(
       snapshot(original.text, selection: NSRange(location: 0, length: 4)))
     XCTAssertThrowsError(
