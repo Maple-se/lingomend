@@ -74,7 +74,9 @@ private final class LingoMendDelegate: NSObject, NSApplicationDelegate {
         let menu = NSMenu()
         let status = NSMenuItem(title: service.modeLabel, action: nil, keyEquivalent: "")
         status.isEnabled = false; statusLine = status; menu.addItem(status)
-        let version = NSMenuItem(title: "LingoMend \(Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "development") · T3 开发版", action: nil, keyEquivalent: "")
+        let shortVersion = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "development"
+        let build = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "unknown"
+        let version = NSMenuItem(title: "LingoMend \(shortVersion) (build \(build)) · T3 开发版", action: nil, keyEquivalent: "")
         version.isEnabled = false; menu.addItem(version)
         add("设置…", action: #selector(showSettings), to: menu)
         menu.addItem(.separator())
