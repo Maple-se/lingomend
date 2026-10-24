@@ -66,6 +66,29 @@ public final class MacOSAccessibilityTextReader: FocusedTextReading, SafeTextRep
         let focused = focusedValue as! AXUIElement
         AXUIElementSetMessagingTimeout(focused, 0.5)
 
+        var candidate: AXUIElement? = focused
+        var lastCaptureError: AccessibilityCaptureError = .textUnavailable
+        for _ in 0..<8 {
+            guard let current = candidate else { break }
+            do {
+                return try captureCandidate(current, system: system, originalFocus: focused)
+            } catch let error as AccessibilityCaptureError {
+                switch error {
+                case .textUnavailable, .selectionUnavailable:
+                    lastCaptureError = error
+                default:
+                    throw error
+                }
+            }
+            candidate = parent(of: current)
+        }
+        throw lastCaptureError
+    }
+
+    private func captureCandidate(_ focused: AXUIElement, system: AXUIElement,
+                                  originalFocus: AXUIElement) throws -> TextSnapshot {
+        AXUIElementSetMessagingTimeout(focused, 0.5)
+
         var subrole: CFTypeRef?
         _ = AXUIElementCopyAttributeValue(focused, kAXSubroleAttribute as CFString, &subrole)
         guard subrole as? String != "AXSecureTextField" else {
@@ -109,7 +132,7 @@ public final class MacOSAccessibilityTextReader: FocusedTextReading, SafeTextRep
         ) == .success,
         let stillFocusedValue,
         CFGetTypeID(stillFocusedValue) == AXUIElementGetTypeID(),
-        CFEqual(focused, stillFocusedValue) else {
+        CFEqual(originalFocus, stillFocusedValue) else {
             throw AccessibilityCaptureError.focusChangedDuringCapture
         }
 
@@ -149,6 +172,13 @@ public final class MacOSAccessibilityTextReader: FocusedTextReading, SafeTextRep
             selectedRange: NSRange(location: range.location, length: range.length),
             revisionToken: revisionToken
         )
+    }
+
+    private func parent(of element: AXUIElement) -> AXUIElement? {
+        var value: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(element, kAXParentAttribute as CFString, &value) == .success,
+              let value, CFGetTypeID(value) == AXUIElementGetTypeID() else { return nil }
+        return value as? AXUIElement
     }
 
     var capturedElement: AXUIElement? { previousElement }
