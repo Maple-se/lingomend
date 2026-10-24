@@ -178,7 +178,7 @@ public final class MacOSAccessibilityTextReader: FocusedTextReading, SafeTextRep
         var value: CFTypeRef?
         guard AXUIElementCopyAttributeValue(element, kAXParentAttribute as CFString, &value) == .success,
               let value, CFGetTypeID(value) == AXUIElementGetTypeID() else { return nil }
-        return value as? AXUIElement
+        return (value as! AXUIElement)
     }
 
     var capturedElement: AXUIElement? { previousElement }
