@@ -109,9 +109,20 @@ public final class MacOSAccessibilityTextReader: FocusedTextReading, SafeTextRep
             throw AccessibilityCaptureError.applicationNotAllowed
         }
         let pid = app.processIdentifier
+        // Some Electron/WebKit clients only publish their editor tree after an
+        // accessibility client enables the enhanced UI attribute. This is a
+        // scoped read-only request on the already-frontmost application; it does
+        // not activate a window or change the editor contents.
         let application = AXUIElementCreateApplication(pid)
-        AXUIElementSetMessagingTimeout(application, 0.3)
-        guard let window = axElement(application, kAXFocusedWindowAttribute) else {
+        AXUIElementSetMessagingTimeout(application, 0.35)
+        enableEnhancedAccessibility(on: application)
+        let focusedApplication = axElement(system, kAXFocusedApplicationAttribute)
+        let applicationRoot = focusedApplication ?? application
+        AXUIElementSetMessagingTimeout(applicationRoot, 0.35)
+        enableEnhancedAccessibility(on: applicationRoot)
+        guard let window = axElement(applicationRoot, kAXFocusedWindowAttribute)
+            ?? axElement(application, kAXFocusedWindowAttribute)
+            ?? axElement(applicationRoot, kAXMainWindowAttribute) else {
             throw AccessibilityCaptureError.focusedWindowUnavailable
         }
         AXUIElementSetMessagingTimeout(window, 0.3)
@@ -132,13 +143,15 @@ public final class MacOSAccessibilityTextReader: FocusedTextReading, SafeTextRep
             }
         }
 
-        let deadline = ContinuousClock.now.advanced(by: .milliseconds(350))
+        // Chromium accessibility trees can be lazy. Search only the focused
+        // window, but allow enough time for its first tree materialization.
+        let deadline = ContinuousClock.now.advanced(by: .milliseconds(900))
         var queue: [(AXUIElement, Int)] = [(window, 0)]
         var index = 0
         var visited: [AXUIElement] = []
         var fallback: [(AXUIElement, Int)] = []
 
-        while index < queue.count, index < 160, ContinuousClock.now < deadline {
+        while index < queue.count, index < 320, ContinuousClock.now < deadline {
             let (current, depth) = queue[index]
             index += 1
             guard !visited.contains(where: { CFEqual($0, current) }) else { continue }
@@ -158,8 +171,9 @@ public final class MacOSAccessibilityTextReader: FocusedTextReading, SafeTextRep
                 }
             }
 
-            if depth < 8, let children = axAttribute(current, kAXChildrenAttribute) as? [AXUIElement] {
-                queue.append(contentsOf: children.prefix(max(0, 160 - queue.count)).map { ($0, depth + 1) })
+            if depth < 12 {
+                let children = axChildren(of: current)
+                queue.append(contentsOf: children.prefix(max(0, 320 - queue.count)).map { ($0, depth + 1) })
             }
         }
 
@@ -177,22 +191,76 @@ public final class MacOSAccessibilityTextReader: FocusedTextReading, SafeTextRep
     private func isEditableCandidate(_ element: AXUIElement) -> Bool {
         let role = axAttribute(element, kAXRoleAttribute) as? String ?? ""
         let editable = axAttribute(element, "AXEditable") as? Bool
-        let textRole = ["AXTextField", "AXTextArea", "AXComboBox", "AXWebArea"].contains(role)
-        guard textRole || editable == true else { return false }
+        let subrole = axAttribute(element, kAXSubroleAttribute) as? String ?? ""
+        let description = ((axAttribute(element, kAXRoleDescriptionAttribute) as? String)
+            ?? (axAttribute(element, kAXDescriptionAttribute) as? String) ?? "").lowercased()
+        let textRole = ["AXTextField", "AXTextArea", "AXComboBox", "AXSearchField", "AXWebArea"].contains(role)
+        let semanticEditor = ["text field", "text area", "message", "editor", "input", "compose"]
+            .contains(where: { description.contains($0) })
+        let textSurface = axAttribute(element, kAXValueAttribute) != nil
+            || axAttribute(element, kAXNumberOfCharactersAttribute) != nil
+            || axAttribute(element, kAXSelectedTextRangeAttribute) != nil
+            || axAttribute(element, kAXSelectedTextAttribute) != nil
+        let settable = isSettable(element, kAXValueAttribute)
+            || isSettable(element, kAXSelectedTextAttribute)
+            || isSettable(element, kAXSelectedTextRangeAttribute)
+            || isSettable(element, kAXSelectedTextRangesAttribute)
+        guard textSurface || settable else { return false }
+        guard textRole || semanticEditor || editable == true || settable || subrole == "AXTextArea" else {
+            return false
+        }
         return (axAttribute(element, kAXEnabledAttribute) as? Bool) != false
     }
 
     private func candidateScore(_ element: AXUIElement) -> Int {
-        switch axAttribute(element, kAXRoleAttribute) as? String {
-        case "AXTextArea": return 60
-        case "AXTextField": return 50
-        case "AXComboBox": return 40
-        case "AXWebArea": return 20
-        default: return 30
+        let role = axAttribute(element, kAXRoleAttribute) as? String
+        let description = ((axAttribute(element, kAXRoleDescriptionAttribute) as? String)
+            ?? (axAttribute(element, kAXDescriptionAttribute) as? String) ?? "").lowercased()
+        let semantic = description.contains("message") || description.contains("editor") || description.contains("input")
+        switch role {
+        case "AXTextArea": return semantic ? 90 : 80
+        case "AXTextField", "AXSearchField": return semantic ? 85 : 70
+        case "AXComboBox": return 60
+        case "AXWebArea": return semantic ? 65 : 35
+        default: return semantic ? 55 : 40
         }
     }
 
+    private func isSettable(_ element: AXUIElement, _ name: String) -> Bool {
+        var value = DarwinBoolean(false)
+        return AXUIElementIsAttributeSettable(element, name as CFString, &value) == .success && value.boolValue
+    }
+
+    private func enableEnhancedAccessibility(on element: AXUIElement) {
+        _ = AXUIElementSetAttributeValue(element, "AXEnhancedUserInterface" as CFString, kCFBooleanTrue)
+    }
+
+    /// Electron/WebKit sometimes exposes the editable node through AXContents or
+    /// AXVisibleChildren instead of AXChildren. Read all bounded structural paths,
+    /// preserving the focused-window-only scope.
+    private func axChildren(of element: AXUIElement) -> [AXUIElement] {
+        var result: [AXUIElement] = []
+        for name in [kAXChildrenAttribute, kAXVisibleChildrenAttribute,
+                     kAXContentsAttribute, kAXRowsAttribute, kAXColumnsAttribute] {
+            guard let value = axAttribute(element, name),
+                  CFGetTypeID(value) == CFArrayGetTypeID() else { continue }
+            let array = value as! CFArray
+            for index in 0..<CFArrayGetCount(array) {
+                guard let raw = CFArrayGetValueAtIndex(array, index) else { continue }
+                let child = unsafeBitCast(raw, to: AXUIElement.self)
+                guard CFGetTypeID(child) == AXUIElementGetTypeID(),
+                      !result.contains(where: { CFEqual($0, child) }) else { continue }
+                result.append(child)
+            }
+        }
+        return result
+    }
+
     private func axAttribute(_ element: AXUIElement, _ name: String) -> CFTypeRef? {
+        // A malformed or lazy web accessibility node must not hold the global
+        // shortcut for seconds. Direct capture uses its own longer timeout when
+        // it has already identified the editor.
+        AXUIElementSetMessagingTimeout(element, 0.12)
         var value: CFTypeRef?
         return AXUIElementCopyAttributeValue(element, name as CFString, &value) == .success ? value : nil
     }

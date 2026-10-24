@@ -6,8 +6,11 @@ public struct EditorCapabilities: Equatable, Sendable {
     public let selectableRange: Bool
     public init(role: String, enabled: Bool, explicitlyEditable: Bool?, valueSettable: Bool,
                 selectedTextSettable: Bool, rangeSettable: Bool) {
-        let textControl = ["AXTextField", "AXTextArea", "AXComboBox"].contains(role) || explicitlyEditable == true
-        editable = enabled && textControl && explicitlyEditable != false
+        // WebKit/Electron editors often expose AXWebArea (or a custom role) instead
+        // of AXTextArea. Settable value/selection attributes are the stronger signal
+        // of editability and let those controls participate without treating a
+        // read-only web document as writable.
+        editable = enabled && explicitlyEditable != false
             && (explicitlyEditable == true || valueSettable || selectedTextSettable)
         selectableRange = rangeSettable
     }

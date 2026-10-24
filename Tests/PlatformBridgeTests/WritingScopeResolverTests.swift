@@ -64,5 +64,15 @@ final class WritingScopeResolverTests: XCTestCase {
             valueSettable: false, selectedTextSettable: true, rangeSettable: false)
         XCTAssertTrue(existingSelection.canAccept(selection: selection))
         XCTAssertFalse(existingSelection.canAccept(selection: NSRange(location: 3, length: 0)))
+
+        let webEditor = EditorCapabilities(role: "AXWebArea", enabled: true, explicitlyEditable: nil,
+            valueSettable: false, selectedTextSettable: true, rangeSettable: true)
+        XCTAssertTrue(webEditor.canAccept(selection: NSRange(location: 3, length: 0)))
+        let readOnlyWeb = EditorCapabilities(role: "AXWebArea", enabled: true, explicitlyEditable: nil,
+            valueSettable: false, selectedTextSettable: false, rangeSettable: true)
+        XCTAssertFalse(readOnlyWeb.canAccept(selection: selection))
+        let customEditor = EditorCapabilities(role: "AXGroup", enabled: true, explicitlyEditable: nil,
+            valueSettable: false, selectedTextSettable: true, rangeSettable: true)
+        XCTAssertTrue(customEditor.canAccept(selection: NSRange(location: 3, length: 0)))
     }
 }
