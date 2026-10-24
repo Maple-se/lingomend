@@ -143,6 +143,23 @@ public final class MacOSAccessibilityTextReader: FocusedTextReading, SafeTextRep
             }
         }
 
+        // Some custom clients expose the editable value on the window or app
+        // root instead of publishing a focused child. Accept those roots only
+        // when both text and a valid selection range are available.
+        for root in [window, applicationRoot] {
+            do {
+                return try captureCandidate(root, system: system, originalFocus: nil,
+                    validationWindow: window, expectedPID: pid)
+            } catch let error as AccessibilityCaptureError {
+                switch error {
+                case .textUnavailable, .selectionUnavailable, .focusedElementUnavailable:
+                    lastError = error
+                default:
+                    throw error
+                }
+            }
+        }
+
         // Chromium accessibility trees can be lazy. Search only the focused
         // window, but allow enough time for its first tree materialization.
         let deadline = ContinuousClock.now.advanced(by: .milliseconds(900))
@@ -417,20 +434,51 @@ public final class MacOSAccessibilityTextReader: FocusedTextReading, SafeTextRep
         return nil
     }
 
+    private func elementBounds(_ element: AXUIElement) -> CGRect? {
+        guard let position = axAttribute(element, kAXPositionAttribute),
+              let size = axAttribute(element, kAXSizeAttribute),
+              CFGetTypeID(position) == AXValueGetTypeID(),
+              CFGetTypeID(size) == AXValueGetTypeID() else { return nil }
+        let positionValue = position as! AXValue
+        let sizeValue = size as! AXValue
+        var point = CGPoint.zero
+        var dimensions = CGSize.zero
+        guard AXValueGetType(positionValue) == .cgPoint,
+              AXValueGetValue(positionValue, .cgPoint, &point),
+              AXValueGetType(sizeValue) == .cgSize,
+              AXValueGetValue(sizeValue, .cgSize, &dimensions),
+              point.x.isFinite, point.y.isFinite,
+              dimensions.width.isFinite, dimensions.height.isFinite,
+              dimensions.width > 0, dimensions.height > 0 else { return nil }
+        return CGRect(origin: point, size: dimensions)
+    }
+
+    private func rectValue(_ value: CFTypeRef?) -> CGRect? {
+        guard let value, CFGetTypeID(value) == AXValueGetTypeID() else { return nil }
+        let ax = value as! AXValue
+        var rect = CGRect.zero
+        guard AXValueGetType(ax) == .cgRect,
+              AXValueGetValue(ax, .cgRect, &rect),
+              rect.origin.x.isFinite, rect.origin.y.isFinite,
+              rect.width.isFinite, rect.height.isFinite, rect.height > 0 else { return nil }
+        return rect
+    }
+
     /// Quartz screen coordinates; the UI converts to AppKit coordinates.
     public func caretBounds(for original: TextSnapshot) async throws -> CGRect? {
         guard try await readFocusedText() == original, let focused = previousElement else { return nil }
         var range = CFRange(location: original.selectedRange.location, length: 0)
         guard let argument = AXValueCreate(.cfRange, &range) else { return nil }
         var result: CFTypeRef?
-        guard AXUIElementCopyParameterizedAttributeValue(focused, kAXBoundsForRangeParameterizedAttribute as CFString,
-              argument, &result) == .success, let result, CFGetTypeID(result) == AXValueGetTypeID() else { return nil }
-        let value = result as! AXValue
-        var bounds = CGRect.zero
-        guard AXValueGetType(value) == .cgRect, AXValueGetValue(value, .cgRect, &bounds),
-              bounds.origin.x.isFinite, bounds.origin.y.isFinite,
-              bounds.width.isFinite, bounds.height.isFinite, bounds.height > 0 else { return nil }
-        return bounds
+        if AXUIElementCopyParameterizedAttributeValue(focused, kAXBoundsForRangeParameterizedAttribute as CFString,
+              argument, &result) == .success, let result, let bounds = rectValue(result) {
+            return bounds
+        }
+        // WebKit/Electron controls may expose text and selection while omitting
+        // AXBoundsForRange. The control frame remains a safe nearby anchor.
+        guard let bounds = elementBounds(focused) else { return nil }
+        return CGRect(x: bounds.minX, y: max(bounds.minY, bounds.maxY - 10),
+                      width: max(1, bounds.width), height: min(max(10, bounds.height), 24))
     }
 
     /// Experimental range acceptance. Changes only a verified placeholder;
