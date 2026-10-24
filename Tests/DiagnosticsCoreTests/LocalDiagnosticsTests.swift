@@ -161,6 +161,18 @@ final class LocalDiagnosticsTests: XCTestCase, @unchecked Sendable {
         XCTAssertEqual(record["length"] as? Int, 0)
         XCTAssertNil(record["httpStatus"])
     }
+    func testApplicationIdentityIsBoundedSystemMetadata() throws {
+        let event = DiagnosticEvent(.helpFailed, reason: .textUnavailable,
+            applicationIdentifier: "com.tinyspeck.slackmacgap", applicationName: "Slack")
+        let record = try JSONSerialization.jsonObject(with: JSONEncoder().encode(event)) as! [String: Any]
+        XCTAssertEqual(record["applicationIdentifier"] as? String, "com.tinyspeck.slackmacgap")
+        XCTAssertEqual(record["applicationName"] as? String, "Slack")
+
+        let longName = String(repeating: "x", count: 161)
+        let rejected = try JSONSerialization.jsonObject(with: JSONEncoder().encode(
+            DiagnosticEvent(.helpFailed, applicationName: "\(longName)\nunsafe"))) as! [String: Any]
+        XCTAssertNil(rejected["applicationName"])
+    }
     func testWriteFailureDisablesOnlyLoggerAndKeepsBufferEmpty() async {
         let logger = LocalDiagnostics(channel: .development, batchDelay: 60, writer: FailingWriter())
         await logger.setEnabled(true); await logger.flush()

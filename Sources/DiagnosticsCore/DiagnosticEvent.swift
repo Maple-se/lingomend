@@ -27,9 +27,12 @@ public enum DiagnosticReason: String, Codable, Sendable {
     case userCancelled, superseded, sourceOrFocusChanged, settingsChanged
     case permissionRequired, captureUnavailable, applicationNotAllowed, empty, multipleSentences
     case tooLong, invalidRange, unsupportedInput, anchorUnavailable
+    case focusedElementUnavailable, applicationUnavailable, textUnavailable, selectionUnavailable
+    case focusChangedDuringCapture, protectedField, unsupportedApplication, writeUnsupported
     case configuration, credentials, unauthorized, rateLimited, http, network, timedOut
     case responseTooLarge, invalidResponse, incompleteResponse, refused, unknown
     case busy, stale, formatUnavailable, unsupportedFormat, modifiersHeld, clipboardUnavailable
+    case plainTextFallback
     case clipboardChanged, selectionFailed, eventUnavailable, resultUnconfirmed, clipboardRestorationFailed
 }
 public enum DiagnosticStage: String, Codable, Sendable {
@@ -44,6 +47,8 @@ public enum DiagnosticLevel: String, Codable, Sendable {
 }
 
 /// Closed schema: no message, free-form metadata, Error, URL, text or object logging API.
+/// The two application fields are bounded system-provided identity only; they never contain
+/// editor contents, drafts, clipboard data, or model responses.
 public struct DiagnosticEvent: Codable, Sendable {
     public let name: DiagnosticName
     public let level: DiagnosticLevel
@@ -58,13 +63,16 @@ public struct DiagnosticEvent: Codable, Sendable {
     public let httpStatus: Int?
     public let dispatched: Bool?
     public let count: Int?
+    public let applicationIdentifier: String?
+    public let applicationName: String?
 
     public init(_ name: DiagnosticName, level: DiagnosticLevel = .info,
                 outcome: DiagnosticOutcome? = nil, reason: DiagnosticReason? = nil,
                 stage: DiagnosticStage? = nil, scope: DiagnosticScope? = nil,
                 mode: DiagnosticMode? = nil, shortcut: DiagnosticShortcut? = nil,
                 length: Int? = nil, durationMS: Int? = nil,
-                httpStatus: Int? = nil, dispatched: Bool? = nil, count: Int? = nil) {
+                httpStatus: Int? = nil, dispatched: Bool? = nil, count: Int? = nil,
+                applicationIdentifier: String? = nil, applicationName: String? = nil) {
         self.name = name; self.level = level; self.outcome = outcome; self.reason = reason
         self.stage = stage; self.scope = scope; self.mode = mode
         self.shortcut = shortcut
@@ -72,6 +80,25 @@ public struct DiagnosticEvent: Codable, Sendable {
         self.durationMS = durationMS.map { max(0, min($0, 86_400_000)) }
         self.httpStatus = httpStatus.flatMap { (100...599).contains($0) ? $0 : nil }
         self.dispatched = dispatched; self.count = count.map { max(0, min($0, 1_000_000)) }
+        self.applicationIdentifier = Self.boundedSystemValue(applicationIdentifier)
+        self.applicationName = Self.boundedSystemValue(applicationName)
+    }
+
+    public func withApplication(identifier: String?, name: String?) -> DiagnosticEvent {
+        DiagnosticEvent(self.name, level: level, outcome: outcome, reason: reason, stage: stage,
+            scope: scope, mode: mode, shortcut: shortcut, length: length, durationMS: durationMS,
+            httpStatus: httpStatus, dispatched: dispatched, count: count,
+            applicationIdentifier: identifier, applicationName: name)
+    }
+
+    private static func boundedSystemValue(_ value: String?) -> String? {
+        guard let value else { return nil }
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, trimmed.utf8.count <= 160,
+              !trimmed.contains("\0"), !trimmed.contains("\n"), !trimmed.contains("\r") else {
+            return nil
+        }
+        return trimmed
     }
 }
 public protocol DiagnosticRecording: Sendable {

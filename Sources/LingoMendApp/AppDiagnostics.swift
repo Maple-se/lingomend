@@ -86,8 +86,32 @@ func diagnosticReason(_ error: Error) -> DiagnosticReason {
         switch error { case .emptySelection: return .empty; case .tooLong: return .tooLong
         case .invalidRange: return .invalidRange }
     }
-    if case AccessibilityCaptureError.permissionRequired = error { return .permissionRequired }
-    if case AccessibilityCaptureError.disjointSelection = error { return .invalidRange }
+    if let error = error as? AccessibilityCaptureError {
+        switch error {
+        case .permissionRequired: return .permissionRequired
+        case .focusedElementUnavailable: return .focusedElementUnavailable
+        case .applicationUnavailable: return .applicationUnavailable
+        case .textUnavailable: return .textUnavailable
+        case .textTooLarge: return .tooLong
+        case .selectionUnavailable: return .selectionUnavailable
+        case .invalidSelection: return .invalidRange
+        case .disjointSelection: return .invalidRange
+        case .focusChangedDuringCapture: return .focusChangedDuringCapture
+        case .protectedField: return .protectedField
+        case .applicationNotAllowed: return .applicationNotAllowed
+        }
+    }
+    if let error = error as? AccessibilityReplacementError {
+        switch error {
+        case .explicitSelectionRequired, .invalidReplacement: return .invalidRange
+        case .unsupportedApplication: return .unsupportedApplication
+        case .staleCapture: return .stale
+        case .targetUnavailable: return .focusedElementUnavailable
+        case .writeUnsupported: return .writeUnsupported
+        case .writeFailed: return .eventUnavailable
+        case .verificationFailed: return .resultUnconfirmed
+        }
+    }
     if error is SentenceInputError { return .unsupportedInput }
     return .captureUnavailable
 }

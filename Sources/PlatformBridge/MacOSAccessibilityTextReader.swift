@@ -84,13 +84,7 @@ public final class MacOSAccessibilityTextReader: FocusedTextReading, SafeTextRep
         }
         guard pid != ProcessInfo.processInfo.processIdentifier else { throw AccessibilityCaptureError.applicationNotAllowed }
 
-        var textValue: CFTypeRef?
-        guard AXUIElementCopyAttributeValue(
-            focused,
-            kAXValueAttribute as CFString,
-            &textValue
-        ) == .success,
-        let text = textValue as? String else {
+        guard let text = try readText(from: focused) else {
             throw AccessibilityCaptureError.textUnavailable
         }
 
@@ -158,6 +152,42 @@ public final class MacOSAccessibilityTextReader: FocusedTextReading, SafeTextRep
     }
 
     var capturedElement: AXUIElement? { previousElement }
+
+    /// Some WebKit/Electron and custom rich-text controls do not expose AXValue, but do
+    /// expose their character count plus AXStringForRange. Prefer the complete value and
+    /// use that bounded range API before refusing the request. This does not use Copy or
+    /// infer a range from selected text, so the sentence boundary remains authoritative.
+    private func readText(from element: AXUIElement) throws -> String? {
+        var value: CFTypeRef?
+        if AXUIElementCopyAttributeValue(element, kAXValueAttribute as CFString, &value) == .success,
+           let text = textValue(value) {
+            return text
+        }
+
+        var countValue: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(
+            element, kAXNumberOfCharactersAttribute as CFString, &countValue
+        ) == .success,
+        let count = (countValue as? NSNumber)?.intValue,
+        count >= 0, count <= 65_536 else {
+            return nil
+        }
+        var range = CFRange(location: 0, length: count)
+        guard let argument = AXValueCreate(.cfRange, &range) else { return nil }
+        var rangedValue: CFTypeRef?
+        guard AXUIElementCopyParameterizedAttributeValue(
+            element, kAXStringForRangeParameterizedAttribute as CFString,
+            argument, &rangedValue
+        ) == .success else { return nil }
+        return textValue(rangedValue)
+    }
+
+    private func textValue(_ value: CFTypeRef?) -> String? {
+        if let text = value as? String { return text }
+        if let string = value as? NSString { return String(string) }
+        if let attributed = value as? NSAttributedString { return attributed.string }
+        return nil
+    }
 
     /// Quartz screen coordinates; the UI converts to AppKit coordinates.
     public func caretBounds(for original: TextSnapshot) async throws -> CGRect? {

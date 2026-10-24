@@ -106,6 +106,7 @@ final class NativeTextEditPasteTests: XCTestCase {
     XCTAssertEqual(driver.pastes, 1)
     XCTAssertEqual(driver.view.string, plan.expectedText)
     XCTAssertTrue(result.caretPositioned)
+    XCTAssertFalse(result.preservesFormatting)
     XCTAssertEqual(result.clipboard, .restored)
     XCTAssertEqual(board.string(forType: .string), "ORIGINAL_CLIPBOARD")
     driver.view.localUndo.undo()
@@ -189,15 +190,16 @@ final class NativeTextEditPasteTests: XCTestCase {
       original: original,
       scope: SentenceScopeResolver().resolve(original),
       replacement: "We need reduce losses without increasing costs.")
-    _ = try await NativeTextEditPaste(driver: driver, clipboard: NativeClipboardLease(board: board))
+    let result = try await NativeTextEditPaste(driver: driver, clipboard: NativeClipboardLease(board: board))
       .accept(plan)
-    let result = driver.view.textStorage!
-    let bold = (result.string as NSString).range(of: "reduce").location
+    XCTAssertTrue(result.preservesFormatting)
+    let resultingStorage = driver.view.textStorage!
+    let bold = (resultingStorage.string as NSString).range(of: "reduce").location
     XCTAssertEqual(
-      (result.attribute(.font, at: bold, effectiveRange: nil) as? NSFont)?.pointSize, 20)
+      (resultingStorage.attribute(.font, at: bold, effectiveRange: nil) as? NSFont)?.pointSize, 20)
     XCTAssertEqual(
-      result.attribute(
-        .underlineStyle, at: (result.string as NSString).range(of: "without").location,
+      resultingStorage.attribute(
+        .underlineStyle, at: (resultingStorage.string as NSString).range(of: "without").location,
         effectiveRange: nil) as? NSNumber, 1)
     driver.view.localUndo.undo()
     XCTAssertTrue(driver.view.textStorage!.isEqual(to: originalRich))
