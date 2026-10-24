@@ -27,7 +27,8 @@ public enum DiagnosticReason: String, Codable, Sendable {
     case userCancelled, superseded, sourceOrFocusChanged, settingsChanged
     case permissionRequired, captureUnavailable, applicationNotAllowed, empty, multipleSentences
     case tooLong, invalidRange, unsupportedInput, anchorUnavailable
-    case focusedElementUnavailable, applicationUnavailable, textUnavailable, selectionUnavailable
+    case focusedElementUnavailable, focusedWindowUnavailable, editableControlUnavailable
+    case applicationUnavailable, textUnavailable, selectionUnavailable
     case focusChangedDuringCapture, protectedField, unsupportedApplication, writeUnsupported
     case configuration, credentials, unauthorized, rateLimited, http, network, timedOut
     case responseTooLarge, invalidResponse, incompleteResponse, refused, unknown

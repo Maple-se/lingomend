@@ -298,6 +298,10 @@ private final class LingoMendDelegate: NSObject, NSApplicationDelegate {
                 switch error {
                 case .focusedElementUnavailable:
                     feedback("当前应用没有提供可定位的编辑器；请把光标放回输入框后重试")
+                case .focusedWindowUnavailable:
+                    feedback("当前应用没有提供可访问的前台窗口；请重新聚焦输入框后重试")
+                case .editableControlUnavailable:
+                    feedback("前台窗口未暴露可编辑文字控件；请先点击输入框后重试")
                 case .applicationUnavailable:
                     feedback("无法识别当前前台应用；请重新聚焦输入框后重试")
                 case .textUnavailable:

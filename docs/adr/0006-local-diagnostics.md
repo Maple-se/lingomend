@@ -40,6 +40,8 @@ credentials, endpoint/model strings, request/response body, document identity,
 path, account, revision/text hash or arbitrary error description is accepted.
 按需操作会记录当前前台应用的系统名称和 bundle identifier，以便区分跨应用
 兼容性失败；不记录窗口标题、文档名称或编辑内容，且字段有长度和控制字符边界。
+辅助功能读取失败还会区分系统焦点、前台窗口和可编辑控件是否可获得，便于判断
+是权限/焦点缺失还是应用没有暴露可写文本接口。
 Known HTTP status codes and fixed error enums are allowed. `invalidResponse`
 remains one category until the provider genuinely distinguishes parsing/validation.
 Event metadata can still reveal usage timing, lengths and failures: these logs are

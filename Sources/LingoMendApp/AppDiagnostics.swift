@@ -90,6 +90,8 @@ func diagnosticReason(_ error: Error) -> DiagnosticReason {
         switch error {
         case .permissionRequired: return .permissionRequired
         case .focusedElementUnavailable: return .focusedElementUnavailable
+        case .focusedWindowUnavailable: return .focusedWindowUnavailable
+        case .editableControlUnavailable: return .editableControlUnavailable
         case .applicationUnavailable: return .applicationUnavailable
         case .textUnavailable: return .textUnavailable
         case .textTooLarge: return .tooLong

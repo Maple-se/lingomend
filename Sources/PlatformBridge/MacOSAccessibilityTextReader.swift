@@ -6,6 +6,8 @@ import Foundation
 public enum AccessibilityCaptureError: Error, Equatable, Sendable {
     case permissionRequired
     case focusedElementUnavailable
+    case focusedWindowUnavailable
+    case editableControlUnavailable
     case applicationUnavailable
     case textUnavailable
     case textTooLarge
@@ -54,24 +56,36 @@ public final class MacOSAccessibilityTextReader: FocusedTextReading, SafeTextRep
         let system = AXUIElementCreateSystemWide()
         AXUIElementSetMessagingTimeout(system, 0.5)
         var focusedValue: CFTypeRef?
-        guard AXUIElementCopyAttributeValue(
+        let hasSystemFocus = AXUIElementCopyAttributeValue(
             system,
             kAXFocusedUIElementAttribute as CFString,
             &focusedValue
-        ) == .success,
-        let focusedValue,
-        CFGetTypeID(focusedValue) == AXUIElementGetTypeID() else {
-            throw AccessibilityCaptureError.focusedElementUnavailable
+        ) == .success
+        if hasSystemFocus, let focusedValue,
+           CFGetTypeID(focusedValue) == AXUIElementGetTypeID() {
+            let focused = focusedValue as! AXUIElement
+            AXUIElementSetMessagingTimeout(focused, 0.5)
+            return try captureFromFocused(focused, system: system)
         }
-        let focused = focusedValue as! AXUIElement
-        AXUIElementSetMessagingTimeout(focused, 0.5)
 
+        // A few Electron/WebKit clients do not publish AXFocusedUIElement through
+        // AXUIElementCreateSystemWide. Stay within the frontmost application and use
+        // its focused window or a bounded editable-control search instead of guessing
+        // from the clipboard or scanning background windows.
+        return try captureFromFrontmostWindow(system: system)
+    }
+
+    private func captureFromFocused(_ focused: AXUIElement, system: AXUIElement,
+                                    validationWindow: AXUIElement? = nil,
+                                    expectedPID: pid_t? = nil) throws -> TextSnapshot {
         var candidate: AXUIElement? = focused
         var lastCaptureError: AccessibilityCaptureError = .textUnavailable
         for _ in 0..<8 {
             guard let current = candidate else { break }
             do {
-                return try captureCandidate(current, system: system, originalFocus: focused)
+                return try captureCandidate(current, system: system,
+                    originalFocus: validationWindow == nil ? focused : nil,
+                    validationWindow: validationWindow, expectedPID: expectedPID)
             } catch let error as AccessibilityCaptureError {
                 switch error {
                 case .textUnavailable, .selectionUnavailable:
@@ -85,8 +99,119 @@ public final class MacOSAccessibilityTextReader: FocusedTextReading, SafeTextRep
         throw lastCaptureError
     }
 
+    private func captureFromFrontmostWindow(system: AXUIElement) throws -> TextSnapshot {
+        guard let app = NSWorkspace.shared.frontmostApplication,
+              app.processIdentifier != ProcessInfo.processInfo.processIdentifier,
+              let appIdentifier = app.bundleIdentifier, !appIdentifier.isEmpty else {
+            throw AccessibilityCaptureError.applicationUnavailable
+        }
+        if let allowedApplications, !allowedApplications.contains(appIdentifier) {
+            throw AccessibilityCaptureError.applicationNotAllowed
+        }
+        let pid = app.processIdentifier
+        let application = AXUIElementCreateApplication(pid)
+        AXUIElementSetMessagingTimeout(application, 0.3)
+        guard let window = axElement(application, kAXFocusedWindowAttribute) else {
+            throw AccessibilityCaptureError.focusedWindowUnavailable
+        }
+        AXUIElementSetMessagingTimeout(window, 0.3)
+
+        var lastError: AccessibilityCaptureError = .focusedElementUnavailable
+        if let windowFocus = axElement(window, kAXFocusedUIElementAttribute)
+            ?? axElement(application, kAXFocusedUIElementAttribute) {
+            do {
+                return try captureFromFocused(windowFocus, system: system,
+                    validationWindow: window, expectedPID: pid)
+            } catch let error as AccessibilityCaptureError {
+                switch error {
+                case .textUnavailable, .selectionUnavailable, .focusedElementUnavailable:
+                    lastError = error
+                default:
+                    throw error
+                }
+            }
+        }
+
+        let deadline = ContinuousClock.now.advanced(by: .milliseconds(350))
+        var queue: [(AXUIElement, Int)] = [(window, 0)]
+        var index = 0
+        var visited: [AXUIElement] = []
+        var fallback: [(AXUIElement, Int)] = []
+
+        while index < queue.count, index < 160, ContinuousClock.now < deadline {
+            let (current, depth) = queue[index]
+            index += 1
+            guard !visited.contains(where: { CFEqual($0, current) }) else { continue }
+            visited.append(current)
+
+            if isEditableCandidate(current) {
+                let score = candidateScore(current)
+                if (axAttribute(current, "AXFocused") as? Bool) == true {
+                    do {
+                        return try captureCandidate(current, system: system, originalFocus: nil,
+                            validationWindow: window, expectedPID: pid)
+                    } catch let error as AccessibilityCaptureError {
+                        lastError = error
+                    }
+                } else if fallback.count < 16 {
+                    fallback.append((current, score))
+                }
+            }
+
+            if depth < 8, let children = axAttribute(current, kAXChildrenAttribute) as? [AXUIElement] {
+                queue.append(contentsOf: children.prefix(max(0, 160 - queue.count)).map { ($0, depth + 1) })
+            }
+        }
+
+        for (candidate, _) in fallback.sorted(by: { $0.1 > $1.1 }) {
+            do {
+                return try captureCandidate(candidate, system: system, originalFocus: nil,
+                    validationWindow: window, expectedPID: pid)
+            } catch let error as AccessibilityCaptureError {
+                lastError = error
+            }
+        }
+        throw fallback.isEmpty ? .editableControlUnavailable : lastError
+    }
+
+    private func isEditableCandidate(_ element: AXUIElement) -> Bool {
+        let role = axAttribute(element, kAXRoleAttribute) as? String ?? ""
+        let editable = axAttribute(element, "AXEditable") as? Bool
+        let textRole = ["AXTextField", "AXTextArea", "AXComboBox", "AXWebArea"].contains(role)
+        guard textRole || editable == true else { return false }
+        return (axAttribute(element, kAXEnabledAttribute) as? Bool) != false
+    }
+
+    private func candidateScore(_ element: AXUIElement) -> Int {
+        switch axAttribute(element, kAXRoleAttribute) as? String {
+        case "AXTextArea": return 60
+        case "AXTextField": return 50
+        case "AXComboBox": return 40
+        case "AXWebArea": return 20
+        default: return 30
+        }
+    }
+
+    private func axAttribute(_ element: AXUIElement, _ name: String) -> CFTypeRef? {
+        var value: CFTypeRef?
+        return AXUIElementCopyAttributeValue(element, name as CFString, &value) == .success ? value : nil
+    }
+
+    private func axElement(_ owner: AXUIElement, _ name: String) -> AXUIElement? {
+        guard let value = axAttribute(owner, name), CFGetTypeID(value) == AXUIElementGetTypeID() else { return nil }
+        return (value as! AXUIElement)
+    }
+
+    private func isCurrentWindow(_ window: AXUIElement, pid: pid_t) -> Bool {
+        guard NSWorkspace.shared.frontmostApplication?.processIdentifier == pid else { return false }
+        let application = AXUIElementCreateApplication(pid)
+        guard let current = axElement(application, kAXFocusedWindowAttribute) else { return false }
+        return CFEqual(window, current)
+    }
+
     private func captureCandidate(_ focused: AXUIElement, system: AXUIElement,
-                                  originalFocus: AXUIElement) throws -> TextSnapshot {
+                                  originalFocus: AXUIElement?, validationWindow: AXUIElement? = nil,
+                                  expectedPID: pid_t? = nil) throws -> TextSnapshot {
         AXUIElementSetMessagingTimeout(focused, 0.5)
 
         var subrole: CFTypeRef?
@@ -124,15 +249,20 @@ public final class MacOSAccessibilityTextReader: FocusedTextReading, SafeTextRep
             throw AccessibilityCaptureError.invalidSelection
         }
 
-        var stillFocusedValue: CFTypeRef?
-        guard AXUIElementCopyAttributeValue(
-            system,
-            kAXFocusedUIElementAttribute as CFString,
-            &stillFocusedValue
-        ) == .success,
-        let stillFocusedValue,
-        CFGetTypeID(stillFocusedValue) == AXUIElementGetTypeID(),
-        CFEqual(originalFocus, stillFocusedValue) else {
+        if let originalFocus {
+            var stillFocusedValue: CFTypeRef?
+            guard AXUIElementCopyAttributeValue(
+                system,
+                kAXFocusedUIElementAttribute as CFString,
+                &stillFocusedValue
+            ) == .success,
+            let stillFocusedValue,
+            CFGetTypeID(stillFocusedValue) == AXUIElementGetTypeID(),
+            CFEqual(originalFocus, stillFocusedValue) else {
+                throw AccessibilityCaptureError.focusChangedDuringCapture
+            }
+        } else if let validationWindow, let expectedPID,
+                  !isCurrentWindow(validationWindow, pid: expectedPID) {
             throw AccessibilityCaptureError.focusChangedDuringCapture
         }
 
