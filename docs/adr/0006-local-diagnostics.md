@@ -42,6 +42,11 @@ path, account, revision/text hash or arbitrary error description is accepted.
 兼容性失败；不记录窗口标题、文档名称或编辑内容，且字段有长度和控制字符边界。
 辅助功能读取失败还会区分系统焦点、前台窗口和可编辑控件是否可获得，便于判断
 是权限/焦点缺失还是应用没有暴露可写文本接口。
+build 15 的 captureChecked 使用独立的 CaptureDiagnostic 白名单结构，仅在用户明确求助/阅读时
+写入一条摘要。保留固定的焦点来源/角色类别、文本与选区长度/位置、搜索计数/终止原因、
+固定 AX 接口类别及最后结果码；不含原始角色名、控件描述、窗口标题、标记内容或文本。
+写前与通知重验不重复输出摘要。候选失效原因区分内容、选区、焦点和重读失败，
+不将来源读取失败简单等同于用户改变了表达。
 Known HTTP status codes and fixed error enums are allowed. `invalidResponse`
 remains one category until the provider genuinely distinguishes parsing/validation.
 Event metadata can still reveal usage timing, lengths and failures: these logs are

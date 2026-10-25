@@ -309,6 +309,19 @@ public final class MacOSNativePasteDriver: NativePasteDriving {
       }
       return
     }
+    // Addressed WebKit/Word marker selection. The transaction immediately
+    // recaptures and verifies the resulting numerical range before posting paste.
+    var settable = DarwinBoolean(false)
+    if AXUIElementIsAttributeSettable(element, "AXSelectedTextMarkerRange" as CFString, &settable) == .success,
+       settable.boolValue,
+       let start = AXEditorAccess.parameter(element, "AXTextMarkerForIndex", NSNumber(value: range.location)),
+       let end = AXEditorAccess.parameter(element, "AXTextMarkerForIndex", NSNumber(value: range.location + range.length)),
+       CFGetTypeID(start) == AXTextMarkerGetTypeID(), CFGetTypeID(end) == AXTextMarkerGetTypeID() {
+      let markers = AXTextMarkerRangeCreate(nil, start as! AXTextMarker, end as! AXTextMarker)
+      guard AXUIElementSetAttributeValue(element, "AXSelectedTextMarkerRange" as CFString, markers) == .success
+        else { throw NativePasteError.selectionFailed }
+      return
+    }
     throw NativePasteError.selectionFailed
   }
   public func postPaste() throws {

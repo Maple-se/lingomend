@@ -161,6 +161,24 @@ final class LocalDiagnosticsTests: XCTestCase, @unchecked Sendable {
         XCTAssertEqual(record["length"] as? Int, 0)
         XCTAssertNil(record["httpStatus"])
     }
+    func testCaptureSchemaContainsOnlyFixedCategoriesAndBoundedMetrics() throws {
+        let capture = CaptureDiagnostic(focus: .system, role: .init(systemRole: "PRIVATE_TEXT_NOT_A_ROLE"),
+            stop: .timeLimit, nodes: 9999, depth: 999, candidates: -8, textLength: 999999,
+            selectionLocation: -4, selectionLength: 999999, editable: false,
+            results: (0..<40).map { _ in .init(api: .value, code: 999999) })
+        let event = DiagnosticEvent(.captureChecked, capture: capture)
+            .withApplication(identifier: "synthetic.editor", name: "Synthetic")
+        let encoded = try JSONEncoder().encode(event)
+        XCTAssertFalse(String(decoding: encoded, as: UTF8.self).contains("PRIVATE_TEXT_NOT_A_ROLE"))
+        let roundTrip = try JSONDecoder().decode(DiagnosticEvent.self, from: encoded)
+        let details = try XCTUnwrap(roundTrip.capture)
+        XCTAssertEqual(details.role, .other)
+        XCTAssertEqual(details.nodes, 512); XCTAssertEqual(details.depth, 32)
+        XCTAssertEqual(details.candidates, 0); XCTAssertEqual(details.selectionLocation, 0)
+        XCTAssertEqual(details.textLength, 65_536); XCTAssertEqual(details.results.count, 24)
+        XCTAssertEqual(details.results.first?.code, 100_000)
+        XCTAssertEqual(roundTrip.applicationIdentifier, "synthetic.editor")
+    }
     func testApplicationIdentityIsBoundedSystemMetadata() throws {
         let event = DiagnosticEvent(.helpFailed, reason: .textUnavailable,
             applicationIdentifier: "com.tinyspeck.slackmacgap", applicationName: "Slack")

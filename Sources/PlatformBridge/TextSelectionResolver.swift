@@ -1,5 +1,6 @@
 import ApplicationServices
 import Foundation
+import DiagnosticsCore
 
 /// A native paste can affect every caret in a multi-cursor editor. One proposal only
 /// authorizes one continuous selection/caret; plural metadata must also agree with it.
@@ -24,13 +25,26 @@ public struct TextSelectionResolver: Sendable {
 
 /// Internal adapter shared by read-only capture and editable capture.
 enum AXSelectionRange {
-    static func read(_ element: AXUIElement) throws -> NSRange? {
+    @MainActor static func read(_ element: AXUIElement, probe: AXCaptureProbe? = nil) throws -> NSRange? {
         func attribute(_ name: String) -> CFTypeRef? {
             var value: CFTypeRef?
-            return AXUIElementCopyAttributeValue(element, name as CFString, &value) == .success ? value : nil
+            let code = AXUIElementCopyAttributeValue(element, name as CFString, &value)
+            probe?.record(name == kAXSelectedTextRangeAttribute ? .selectedRange : .selectedRanges, code)
+            return code == .success ? value : nil
         }
-        return try decodeValues(singular: attribute(kAXSelectedTextRangeAttribute),
-                                plural: attribute(kAXSelectedTextRangesAttribute))
+        if let range = try decodeValues(singular: attribute(kAXSelectedTextRangeAttribute),
+                                       plural: attribute(kAXSelectedTextRangesAttribute)) { return range }
+        // Word/WebKit may publish opaque markers rather than numerical ranges.
+        // Use their index API; never decode marker bytes or match repeated words.
+        guard let value = AXEditorAccess.attribute(element, "AXSelectedTextMarkerRange", probe: probe, api: .selectedMarker),
+              CFGetTypeID(value) == AXTextMarkerRangeGetTypeID() else { return nil }
+        let markers = value as! AXTextMarkerRange
+        guard let start = AXEditorAccess.parameter(element, "AXIndexForTextMarker",
+                AXTextMarkerRangeCopyStartMarker(markers), probe: probe, api: .markerIndex) as? NSNumber,
+              let end = AXEditorAccess.parameter(element, "AXIndexForTextMarker",
+                AXTextMarkerRangeCopyEndMarker(markers), probe: probe, api: .markerIndex) as? NSNumber,
+              start.intValue >= 0, end.intValue >= start.intValue else { return nil }
+        return NSRange(location: start.intValue, length: end.intValue - start.intValue)
     }
 
     static func decodeValues(singular singularValue: CFTypeRef?, plural pluralValue: CFTypeRef?) throws -> NSRange? {

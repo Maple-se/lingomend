@@ -2,7 +2,20 @@
 
 ## 版本与默认值
 
-本轮基线为 0.5.2（build 14）。先从旧 LM 菜单退出，再打开新构建的 app。
+本轮基线为 0.5.2（build 15）。先从旧 LM 菜单退出，再打开新构建的 app。
+
+build 15 在明确写作/阅读快捷键时各记录一条 `captureChecked`，与同次操作共用关联编号。
+嵌套 `capture` 只含固定类别、有限长度/计数和 AX 接口结果码；不保存正文、标题、控件描述或完整界面树。
+`focus`/`focusRole` 标识焦点来源和类别，`role` 是最后尝试/成功的文本节点类别，
+`textLength`、`selectionLocation`、`selectionLength` 是有限数值，缺失表示未取得，不等于 0。
+阅读的 `textLength` 指所取得选中文字的长度；写作指取得文本快照的长度。
+`emptyValues` 记录写作读取中遇到的空/空白直接值次数，`nodes`/`depth` 为结构查找统计。
+`stop` 区分 matched、exhausted、nodeLimit、depthLimit、timeLimit、refused。
+`results` 中 code=0 表示调用成功，但不证明返回了正文或非空选区；同类 API 保留最后一次调用结果。
+模型后的校验与接受前重读不逐次输出采集摘要，避免重复日志。
+
+候选因变化失效时，`candidateDismissed.reason` 区分 sourceChanged、selectionChanged、focusChanged、sourceReadFailed。
+模型层的 CancellationError 仍会记录 userCancelled；判断触发原因应与同一 operation 的 candidateDismissed 一起查看。
 开发包：`.build/LingoMend.app`，首次默认开启日志；你手动关闭后，重启仍关闭。
 正式渠道默认关闭，不继承开发渠道的手选开关；渠道缺失或错误也默认关闭。
 更新临时签名后如 macOS 不再认可辅助功能权限，按既有 T2 指引重新添加同一路径的 app。

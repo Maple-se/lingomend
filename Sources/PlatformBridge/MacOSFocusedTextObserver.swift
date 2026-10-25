@@ -28,7 +28,15 @@ public final class MacOSFocusedTextObserver: NSObject {
     /// Read-only browser/PDF selections may be owned by a parent rather than AX focus.
     /// Subscribe only to the source explicitly captured for the current request.
     public func observeReadingSelection(from reader: MacOSReadingSelectionReader) {
-        guard enabled, let observer, let source = reader.capturedElement,
+        observeSource(reader.capturedElement)
+    }
+
+    public func observeWritingSelection(from reader: MacOSAccessibilityTextReader) {
+        observeSource(reader.capturedElement)
+    }
+
+    private func observeSource(_ source: AXUIElement?) {
+        guard enabled, let observer, let source,
               element == nil || !CFEqual(element!, source) else { return }
         if let readingElement {
             for notification in [kAXValueChangedNotification, kAXSelectedTextChangedNotification] {
@@ -44,11 +52,11 @@ public final class MacOSFocusedTextObserver: NSObject {
 
     @objc private func activeApplicationChanged() {
         detach()
-        onUnavailable?()
-        guard enabled, AXIsProcessTrusted(),
+        guard enabled else { return }
+        guard AXIsProcessTrusted(),
               let app = NSWorkspace.shared.frontmostApplication,
               let identifier = app.bundleIdentifier,
-              allowedApplications.contains(identifier) else { return }
+              allowedApplications.contains(identifier) else { onUnavailable?(); return }
         var result: AXObserver?
         guard AXObserverCreate(app.processIdentifier, Self.callback, &result) == .success,
               let result else { return }
@@ -63,14 +71,19 @@ public final class MacOSFocusedTextObserver: NSObject {
 
     private func focusedElementChanged() {
         guard enabled, let observer,
-              let id = NSWorkspace.shared.frontmostApplication?.bundleIdentifier,
+              let app = NSWorkspace.shared.frontmostApplication, let id = app.bundleIdentifier,
               allowedApplications.contains(id) else { onUnavailable?(); return }
         let system = AXUIElementCreateSystemWide()
         AXUIElementSetMessagingTimeout(system, 0.2)
         var value: CFTypeRef?
-        guard AXUIElementCopyAttributeValue(system, kAXFocusedUIElementAttribute as CFString, &value) == .success,
-              let value, CFGetTypeID(value) == AXUIElementGetTypeID() else { onUnavailable?(); return }
-        let focused = value as! AXUIElement
+        let code = AXUIElementCopyAttributeValue(system, kAXFocusedUIElementAttribute as CFString, &value)
+        let application = AXUIElementCreateApplication(app.processIdentifier)
+        guard let focused = (code == .success ? AXEditorAccess.element(value) : nil)
+            ?? AXEditorAccess.element(AXEditorAccess.attribute(application, kAXFocusedUIElementAttribute)) else {
+            // A missing focus attribute is not proof of a user focus change.
+            // Let the session revalidate its addressed source and classify it.
+            onChange?(); return
+        }
         if element == nil || !CFEqual(element!, focused) {
             if let element {
                 for notification in [kAXValueChangedNotification, kAXSelectedTextChangedNotification] {
@@ -95,9 +108,13 @@ public final class MacOSFocusedTextObserver: NSObject {
         readingElement = nil
     }
 
-    private static let callback: AXObserverCallback = { _, _, _, context in
+    private static let callback: AXObserverCallback = { _, _, notification, context in
         guard let context else { return }
         let owner = Unmanaged<MacOSFocusedTextObserver>.fromOpaque(context).takeUnretainedValue()
-        Task { @MainActor in owner.focusedElementChanged() }
+        let isFocus = notification as String == kAXFocusedUIElementChangedNotification
+        Task { @MainActor in
+            if isFocus { owner.focusedElementChanged() }
+            else { owner.onChange?() }
+        }
     }
 }

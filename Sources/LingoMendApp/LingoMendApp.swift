@@ -96,7 +96,7 @@ private final class LingoMendDelegate: NSObject, NSApplicationDelegate {
         readingKey = reading; readingRegistered = reading.register()
         if !readingRegistered { status.title = "⌃⌥D 注册失败；请检查快捷键冲突" }
         observer.onChange = { [weak self] in self?.checkObservedChange() }
-        observer.onUnavailable = { [weak self] in self?.discardChangedPreview() }
+        observer.onUnavailable = { [weak self] in self?.discardChangedPreview(reason: .focusChanged) }
         reader.allowedApplications = []
     }
     private var triggerRegistered = false
@@ -147,7 +147,7 @@ private final class LingoMendDelegate: NSObject, NSApplicationDelegate {
 
     private func checkObservedChange() {
         if let reading = activeReading {
-            if !readingReader.isCurrent(reading) { discardChangedPreview() }
+            if let reason = readingReader.changeReason(for: reading) { discardChangedPreview(reason: reason) }
             return
         }
         guard let snapshot = activeSnapshot, acceptance == nil else { return }
@@ -155,16 +155,23 @@ private final class LingoMendDelegate: NSObject, NSApplicationDelegate {
         Task { @MainActor [weak self] in
             guard let self, epoch == token else { return }
             // AX notifications may repeat without any real source/selection change.
-            let current = try? await reader.readFocusedText()
-            guard epoch == token, current != snapshot else { return }
-            discardChangedPreview()
+            do {
+                let current = try await reader.readFocusedText()
+                guard epoch == token, let reason = current.changeReason(comparedTo: snapshot) else { return }
+                discardChangedPreview(reason: reason)
+            } catch {
+                guard epoch == token else { return }
+                discardChangedPreview(reason: .sourceReadFailed)
+            }
         }
     }
 
-    private func discardChangedPreview() {
+    private func discardChangedPreview(reason: DiagnosticReason = .sourceOrFocusChanged) {
         guard acceptance == nil, generation != nil || hasPreview else { return }
-        invalidate(reason: .sourceOrFocusChanged)
-        statusLine?.title = "文本或焦点已变化；可重新按快捷键求助"
+        invalidate(reason: reason)
+        statusLine?.title = reason == .sourceReadFailed
+            ? "暂时无法重读原输入区域；可重新按快捷键求助"
+            : "文本、选区或焦点已变化；可重新按快捷键求助"
     }
 
     private func invalidate(reason: DiagnosticReason? = nil) {
@@ -244,10 +251,11 @@ private final class LingoMendDelegate: NSObject, NSApplicationDelegate {
                 }
             }
             do {
-                let snapshot = try await reader.readFocusedText()
+                let snapshot = try await reader.readFocusedText(diagnostics: diagnostics.recorder, operation: token)
                 try Task.checkCancellation()
                 guard epoch == token else { return }
                 activeSnapshot = snapshot
+                observer.observeWritingSelection(from: reader)
                 guard reader.capabilities?.canAccept(selection: snapshot.selectedRange) == true else {
                     record(DiagnosticEvent(.helpFailed, outcome: .refused,
                         reason: .unsupportedInput, stage: .capture), operation: token)
@@ -265,7 +273,8 @@ private final class LingoMendDelegate: NSObject, NSApplicationDelegate {
                 try Task.checkCancellation()
                 guard epoch == token else { return }
                 stage = .candidate
-                guard try await reader.readFocusedText() == snapshot else { discardChangedPreview(); return }
+                let current = try await reader.readFocusedText()
+                if let reason = current.changeReason(comparedTo: snapshot) { discardChangedPreview(reason: reason); return }
                 let proposal = try SentenceProposal(snapshot: snapshot, scope: scope, advice: advice)
                 guard let anchor = try await reader.caretBounds(for: snapshot), epoch == token else {
                     record(DiagnosticEvent(.helpFailed, outcome: .refused,
@@ -374,7 +383,7 @@ private final class LingoMendDelegate: NSObject, NSApplicationDelegate {
                 }
             }
             do {
-                let capture = try readingReader.capture()
+                let capture = try readingReader.capture(diagnostics: diagnostics.recorder, operation: token)
                 try Task.checkCancellation()
                 guard epoch == token else { return }
                 activeReading = capture
@@ -394,7 +403,7 @@ private final class LingoMendDelegate: NSObject, NSApplicationDelegate {
                 try Task.checkCancellation()
                 guard epoch == token else { return }
                 stage = .candidate
-                guard readingReader.isCurrent(capture) else { discardChangedPreview(); return }
+                if let reason = readingReader.changeReason(for: capture) { discardChangedPreview(reason: reason); return }
                 hasPreview = true; notice.hide()
                 readingPanel.show(request: request, explanation: explanation, anchor: capture.anchor,
                     onDismiss: { [weak self] in self?.invalidate(reason: .userCancelled) })

@@ -1,5 +1,6 @@
 import AppKit
 import ApplicationServices
+import DiagnosticsCore
 
 public struct ReadingCapture: Equatable, Sendable {
     public let id: UUID
@@ -25,9 +26,26 @@ public final class MacOSReadingSelectionReader {
         let rawSelection: String
     }
     private var source: Source?
+    private var probe: AXCaptureProbe?
     var capturedElement: AXUIElement? { source?.element }
     public init() {}
     public func clear() { source = nil }
+
+    public func capture(diagnostics: any DiagnosticRecording, operation: UUID) throws -> ReadingCapture {
+        let collector = AXCaptureProbe()
+        let app = NSWorkspace.shared.frontmostApplication
+        var succeeded = false
+        probe = collector
+        defer {
+            probe = nil
+            if !succeeded, collector.stop == .matched { collector.stop = .refused }
+            diagnostics.record(DiagnosticEvent(.captureChecked,
+                outcome: collector.stop == .matched ? .success : .refused, stage: .capture, shortcut: .read,
+                applicationIdentifier: app?.bundleIdentifier, applicationName: app?.localizedName,
+                capture: collector.summary()), operation: operation)
+        }
+        let result = try capture(); succeeded = true; return result
+    }
 
     public func capture() throws -> ReadingCapture {
         clear()
@@ -37,10 +55,11 @@ public final class MacOSReadingSelectionReader {
             throw AccessibilityCaptureError.applicationUnavailable
         }
         let application = AXUIElementCreateApplication(app.processIdentifier)
+        AXEditorAccess.enable(application, probe: probe)
         guard let window = element(attribute(application, kAXFocusedWindowAttribute)) else {
             throw AccessibilityCaptureError.focusedElementUnavailable
         }
-        let focus = element(attribute(AXUIElementCreateSystemWide(), kAXFocusedUIElementAttribute))
+        let focus = focusedElement(application)
         if let focus, attribute(focus, kAXSubroleAttribute) as? String == "AXSecureTextField" {
             throw AccessibilityCaptureError.protectedField
         }
@@ -56,8 +75,10 @@ public final class MacOSReadingSelectionReader {
         for _ in 0..<12 {
             guard let current = candidate, ContinuousClock.now < deadline else { break }
             visited.append(current)
+            probe?.nodes = visited.count
             if let result = try read(current, identifier: identifier, focus: focus, window: window, pid: pid) {
                 source = result
+                probe?.stop = .matched
                 guard isCurrent(result.capture) else { clear(); throw AccessibilityCaptureError.focusChangedDuringCapture }
                 return result.capture
             }
@@ -67,37 +88,71 @@ public final class MacOSReadingSelectionReader {
         // PDF/native document views may leave AX focus on a container. Search only the
         // front window, with fixed node/depth/time bounds; never scan background windows.
         var queue: [(AXUIElement, Int)] = [(window, 0)], index = 0
-        while index < queue.count, index < 80, ContinuousClock.now < deadline {
+        var depthLimited = false
+        while index < queue.count, index < 320, ContinuousClock.now < deadline {
             let (current, depth) = queue[index]; index += 1
+            probe?.depth = max(probe?.depth ?? 0, depth)
             if !visited.contains(where: { CFEqual($0, current) }) {
                 visited.append(current)
+                probe?.nodes = visited.count
                 if let result = try read(current, identifier: identifier, focus: focus, window: window, pid: pid) {
                     source = result
+                    probe?.stop = .matched
                     guard isCurrent(result.capture) else { clear(); throw AccessibilityCaptureError.focusChangedDuringCapture }
                     return result.capture
                 }
             }
-            if depth < 8, attribute(current, kAXSubroleAttribute) as? String != "AXSecureTextField",
-               let children = attribute(current, kAXChildrenAttribute) as? [AXUIElement] {
-                queue.append(contentsOf: children.prefix(max(0, 80 - queue.count)).map { ($0, depth + 1) })
-            }
+            if depth < 12, AXEditorAccess.belongs(current, to: pid),
+               attribute(current, kAXSubroleAttribute) as? String != "AXSecureTextField" {
+                let children = AXEditorAccess.children(current, limit: 320 - queue.count, probe: probe)
+                queue.append(contentsOf: children.map { ($0, depth + 1) })
+            } else if depth >= 12 { depthLimited = true }
         }
+        probe?.stop = ContinuousClock.now >= deadline ? .timeLimit
+            : (index >= 320 || queue.count >= 320 ? .nodeLimit : (depthLimited ? .depthLimit : .exhausted))
         throw AccessibilityCaptureError.selectionUnavailable
     }
 
     /// Recheck the same addressed source, rather than searching for any matching word.
     public func isCurrent(_ capture: ReadingCapture) -> Bool {
-        let focus = element(attribute(AXUIElementCreateSystemWide(), kAXFocusedUIElementAttribute))
-        guard let source, source.capture.id == capture.id,
-              NSWorkspace.shared.frontmostApplication?.processIdentifier == source.pid,
-              sameValue(focus, source.focus),
-              let window = element(attribute(AXUIElementCreateApplication(source.pid), kAXFocusedWindowAttribute)),
-              CFEqual(window, source.window),
-              let fresh = try? read(source.element, identifier: capture.applicationIdentifier,
-                focus: focus, window: window, pid: source.pid),
-              fresh.rawSelection == source.rawSelection, fresh.range == source.range,
-              fresh.capture.scope == capture.scope else { return false }
-        return sameValue(source.marker, fresh.marker) && sameValue(source.multipleRanges, fresh.multipleRanges)
+        changeReason(for: capture) == nil
+    }
+
+    public func changeReason(for capture: ReadingCapture) -> DiagnosticReason? {
+        guard let source, source.capture.id == capture.id else { return .sourceReadFailed }
+        guard NSWorkspace.shared.frontmostApplication?.processIdentifier == source.pid else { return .focusChanged }
+        let app = AXUIElementCreateApplication(source.pid)
+        let focus = focusedElement(app)
+        guard sameValue(focus, source.focus),
+              let window = element(attribute(app, kAXFocusedWindowAttribute)),
+              CFEqual(window, source.window) else { return .focusChanged }
+        guard let fresh = try? read(source.element, identifier: capture.applicationIdentifier,
+            focus: focus, window: window, pid: source.pid) else { return .sourceReadFailed }
+        // Opaque marker objects can be regenerated without a changed numerical
+        // range. Compare verified indices when available; opaque-only captures
+        // still require stable marker identity to disambiguate repeated text.
+        let sameMarker = source.range != nil || sameValue(source.marker, fresh.marker)
+        guard fresh.rawSelection == source.rawSelection, fresh.range == source.range,
+              sameMarker, sameValue(source.multipleRanges, fresh.multipleRanges)
+              else { return .selectionChanged }
+        return fresh.capture.scope == capture.scope ? nil : .sourceChanged
+    }
+
+    private func focusedElement(_ application: AXUIElement) -> AXUIElement? {
+        if let focus = element(AXEditorAccess.attribute(AXUIElementCreateSystemWide(), kAXFocusedUIElementAttribute,
+            probe: probe, api: .systemFocus)) {
+            probe?.focus = .system
+            probe?.focusRole = .init(systemRole: attribute(focus, kAXRoleAttribute) as? String)
+            return focus
+        }
+        if let focus = element(AXEditorAccess.attribute(application, kAXFocusedUIElementAttribute,
+            probe: probe, api: .applicationFocus)) {
+            probe?.focus = .application
+            probe?.focusRole = .init(systemRole: attribute(focus, kAXRoleAttribute) as? String)
+            return focus
+        }
+        probe?.focus = .unavailable
+        return nil
     }
 
     private func read(_ node: AXUIElement, identifier: String, focus: AXUIElement?,
@@ -105,9 +160,11 @@ public final class MacOSReadingSelectionReader {
         guard attribute(node, kAXSubroleAttribute) as? String != "AXSecureTextField" else { return nil }
         var owner: pid_t = 0
         guard AXUIElementGetPid(node, &owner) == .success, owner == pid else { return nil }
+        let role = attribute(node, kAXRoleAttribute) as? String ?? ""
+        probe?.role = CaptureDiagnostic.Role(systemRole: role)
         let range: NSRange?
         let multipleRanges: CFTypeRef?
-        do { range = try AXSelectionRange.read(node); multipleRanges = nil }
+        do { range = try AXSelectionRange.read(node, probe: probe); multipleRanges = nil }
         catch AccessibilityCaptureError.disjointSelection {
             // A read-only selection may be segmented (e.g. document lines). Explain the
             // actual selected text without inventing a contiguous context or edit address.
@@ -115,10 +172,19 @@ public final class MacOSReadingSelectionReader {
         }
         let marker = multipleRanges == nil ? attribute(node, "AXSelectedTextMarkerRange") : nil
         let markerText = marker.flatMap { parameter(node, "AXStringForTextMarkerRange", $0) as? String }
-        let raw = markerText ?? attribute(node, kAXSelectedTextAttribute) as? String
-            ?? range.flatMap { rangeArgument($0).flatMap { parameter(node, kAXStringForRangeParameterizedAttribute, $0) as? String } }
+        func nonempty(_ text: String?) -> String? {
+            text.flatMap { $0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : $0 }
+        }
+        let raw = nonempty(markerText) ?? nonempty(attribute(node, kAXSelectedTextAttribute) as? String)
+            ?? range.flatMap { range -> String? in
+                guard range.length > 0, let argument = rangeArgument(range) else { return nil }
+                if let text = nonempty(parameter(node, kAXStringForRangeParameterizedAttribute, argument) as? String) { return text }
+                return nonempty((parameter(node, kAXAttributedStringForRangeParameterizedAttribute, argument) as? NSAttributedString)?.string)
+            }
         guard let raw, !raw.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
-        let role = attribute(node, kAXRoleAttribute) as? String ?? ""
+        probe?.candidates += 1
+        probe?.selection = range
+        probe?.textLength = raw.utf16.count
         let isPDF = identifier == "com.apple.Preview" || role.localizedCaseInsensitiveContains("pdf")
         let resolver = ReadingScopeResolver()
         var scope = try resolver.selectionOnly(raw, isPDF: isPDF)
@@ -200,13 +266,25 @@ public final class MacOSReadingSelectionReader {
         }
     }
     private func attribute(_ element: AXUIElement, _ name: String) -> CFTypeRef? {
-        AXUIElementSetMessagingTimeout(element, 0.08)
-        var value: CFTypeRef?
-        return AXUIElementCopyAttributeValue(element, name as CFString, &value) == .success ? value : nil
+        let api: CaptureDiagnostic.API? = switch name {
+        case kAXValueAttribute: .value
+        case kAXNumberOfCharactersAttribute: .characterCount
+        case kAXSelectedTextAttribute: .selectedText
+        case kAXFocusedWindowAttribute: .focusedWindow
+        case "AXSelectedTextMarkerRange": .selectedMarker
+        default: nil
+        }
+        return AXEditorAccess.attribute(element, name, probe: probe, api: api)
     }
     private func parameter(_ element: AXUIElement, _ name: String, _ argument: CFTypeRef) -> CFTypeRef? {
-        var value: CFTypeRef?
-        return AXUIElementCopyParameterizedAttributeValue(element, name as CFString, argument, &value) == .success ? value : nil
+        let api: CaptureDiagnostic.API? = switch name {
+        case kAXStringForRangeParameterizedAttribute: .stringForRange
+        case kAXAttributedStringForRangeParameterizedAttribute: .attributedStringForRange
+        case "AXStringForTextMarkerRange": .stringForMarkerRange
+        case "AXIndexForTextMarker": .markerIndex
+        default: nil
+        }
+        return AXEditorAccess.parameter(element, name, argument, probe: probe, api: api)
     }
     private func element(_ value: CFTypeRef?) -> AXUIElement? {
         guard let value, CFGetTypeID(value) == AXUIElementGetTypeID() else { return nil }

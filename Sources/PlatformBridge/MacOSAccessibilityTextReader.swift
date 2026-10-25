@@ -2,6 +2,7 @@ import AppKit
 import ApplicationServices
 import CryptoKit
 import Foundation
+import DiagnosticsCore
 
 public enum AccessibilityCaptureError: Error, Equatable, Sendable {
     case permissionRequired
@@ -40,11 +41,39 @@ public final class MacOSAccessibilityTextReader: FocusedTextReading, SafeTextRep
     private var previousElement: AXUIElement?
     private var previousElementIdentifier: String?
     public private(set) var capabilities: EditorCapabilities?
+    private var probe: AXCaptureProbe?
 
     public init() {}
 
     public func readFocusedText() async throws -> TextSnapshot {
         try captureFocusedText()
+    }
+
+    public func readFocusedText(diagnostics: any DiagnosticRecording, operation: UUID) async throws -> TextSnapshot {
+        let collector = AXCaptureProbe()
+        probe = collector
+        let app = NSWorkspace.shared.frontmostApplication
+        var succeeded = false
+        defer {
+            if probe === collector { probe = nil }
+            if !succeeded, collector.stop == .matched { collector.stop = .refused }
+            diagnostics.record(DiagnosticEvent(.captureChecked,
+                outcome: collector.stop == .matched ? .success : .refused, stage: .capture,
+                applicationIdentifier: app?.bundleIdentifier, applicationName: app?.localizedName,
+                capture: collector.summary()), operation: operation)
+        }
+        do { let result = try captureFocusedText(); succeeded = true; return result }
+        catch let error as AccessibilityCaptureError {
+            guard error == .editableControlUnavailable || error == .textUnavailable || error == .selectionUnavailable else { throw error }
+            let pid = app?.processIdentifier
+            // One bounded settling attempt for a lazily enabled AX tree, only
+            // during an explicit shortcut, never during final preflight.
+            try await Task.sleep(for: .milliseconds(100))
+            guard NSWorkspace.shared.frontmostApplication?.processIdentifier == pid else {
+                throw AccessibilityCaptureError.focusChangedDuringCapture
+            }
+            let result = try captureFocusedText(); succeeded = true; return result
+        }
     }
 
     // Synchronous form for a final validation and addressed paste with no suspension in between.
@@ -56,23 +85,33 @@ public final class MacOSAccessibilityTextReader: FocusedTextReading, SafeTextRep
         let system = AXUIElementCreateSystemWide()
         AXUIElementSetMessagingTimeout(system, 0.5)
         var focusedValue: CFTypeRef?
-        let hasSystemFocus = AXUIElementCopyAttributeValue(
+        let focusCode = AXUIElementCopyAttributeValue(
             system,
             kAXFocusedUIElementAttribute as CFString,
             &focusedValue
-        ) == .success
-        if hasSystemFocus, let focusedValue,
+        )
+        probe?.record(.systemFocus, focusCode)
+        var initialError: AccessibilityCaptureError = .focusedElementUnavailable
+        if focusCode == .success, let focusedValue,
            CFGetTypeID(focusedValue) == AXUIElementGetTypeID() {
             let focused = focusedValue as! AXUIElement
             AXUIElementSetMessagingTimeout(focused, 0.5)
-            return try captureFromFocused(focused, system: system)
+            probe?.focus = .system
+            probe?.focusRole = .init(systemRole: axAttribute(focused, kAXRoleAttribute) as? String)
+            do { return try captureFromFocused(focused, system: system) }
+            catch let error as AccessibilityCaptureError {
+                guard error == .textUnavailable || error == .selectionUnavailable else { throw error }
+                initialError = error
+                // Word and virtualized editors may focus a container/empty proxy.
+                // Continue to the same application's focused descendants.
+            }
         }
 
         // A few Electron/WebKit clients do not publish AXFocusedUIElement through
         // AXUIElementCreateSystemWide. Stay within the frontmost application and use
         // its focused window or a bounded editable-control search instead of guessing
         // from the clipboard or scanning background windows.
-        return try captureFromFrontmostWindow(system: system)
+        return try captureFromFrontmostWindow(system: system, initialError: initialError)
     }
 
     private func captureFromFocused(_ focused: AXUIElement, system: AXUIElement,
@@ -82,10 +121,17 @@ public final class MacOSAccessibilityTextReader: FocusedTextReading, SafeTextRep
         var lastCaptureError: AccessibilityCaptureError = .textUnavailable
         for _ in 0..<8 {
             guard let current = candidate else { break }
+            let role = axAttribute(current, kAXRoleAttribute) as? String
+            if role == "AXWindow" || role == "AXApplication" { break }
             do {
-                return try captureCandidate(current, system: system,
+                let snapshot = try captureCandidate(current, system: system,
                     originalFocus: validationWindow == nil ? focused : nil,
                     validationWindow: validationWindow, expectedPID: expectedPID)
+                if !snapshot.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    return snapshot
+                }
+                probe?.stop = .refused
+                lastCaptureError = .textUnavailable
             } catch let error as AccessibilityCaptureError {
                 switch error {
                 case .textUnavailable, .selectionUnavailable:
@@ -99,7 +145,8 @@ public final class MacOSAccessibilityTextReader: FocusedTextReading, SafeTextRep
         throw lastCaptureError
     }
 
-    private func captureFromFrontmostWindow(system: AXUIElement) throws -> TextSnapshot {
+    private func captureFromFrontmostWindow(system: AXUIElement,
+        initialError: AccessibilityCaptureError = .focusedElementUnavailable) throws -> TextSnapshot {
         guard let app = NSWorkspace.shared.frontmostApplication,
               app.processIdentifier != ProcessInfo.processInfo.processIdentifier,
               let appIdentifier = app.bundleIdentifier, !appIdentifier.isEmpty else {
@@ -109,29 +156,24 @@ public final class MacOSAccessibilityTextReader: FocusedTextReading, SafeTextRep
             throw AccessibilityCaptureError.applicationNotAllowed
         }
         let pid = app.processIdentifier
-        // Some Electron/WebKit clients only publish their editor tree after an
-        // accessibility client enables the enhanced UI attribute. This is a
-        // scoped read-only request on the already-frontmost application; it does
-        // not activate a window or change the editor contents.
         let application = AXUIElementCreateApplication(pid)
-        AXUIElementSetMessagingTimeout(application, 0.35)
-        enableEnhancedAccessibility(on: application)
-        let focusedApplication = axElement(system, kAXFocusedApplicationAttribute)
-        let applicationRoot = focusedApplication ?? application
-        AXUIElementSetMessagingTimeout(applicationRoot, 0.35)
-        enableEnhancedAccessibility(on: applicationRoot)
-        guard let window = axElement(applicationRoot, kAXFocusedWindowAttribute)
-            ?? axElement(application, kAXFocusedWindowAttribute)
-            ?? axElement(applicationRoot, kAXMainWindowAttribute) else {
+        AXUIElementSetMessagingTimeout(application, 0.08)
+        AXEditorAccess.enable(application, probe: probe)
+        guard let window = axElement(application, kAXFocusedWindowAttribute) else {
             throw AccessibilityCaptureError.focusedWindowUnavailable
         }
         AXUIElementSetMessagingTimeout(window, 0.3)
 
-        var lastError: AccessibilityCaptureError = .focusedElementUnavailable
-        if let windowFocus = axElement(window, kAXFocusedUIElementAttribute)
-            ?? axElement(application, kAXFocusedUIElementAttribute) {
+        var lastError = initialError
+        let applicationFocus = axElement(application, kAXFocusedUIElementAttribute)
+        let windowFocus = AXEditorAccess.element(AXEditorAccess.attribute(window, kAXFocusedUIElementAttribute,
+            probe: probe, api: .windowFocus))
+        if let focused = applicationFocus ?? windowFocus {
+            guard AXEditorAccess.belongs(focused, to: pid) else { throw AccessibilityCaptureError.focusChangedDuringCapture }
+            probe?.focus = applicationFocus != nil ? .application : .window
+            probe?.focusRole = .init(systemRole: axAttribute(focused, kAXRoleAttribute) as? String)
             do {
-                return try captureFromFocused(windowFocus, system: system,
+                return try captureFromFocused(focused, system: system,
                     validationWindow: window, expectedPID: pid)
             } catch let error as AccessibilityCaptureError {
                 switch error {
@@ -143,104 +185,73 @@ public final class MacOSAccessibilityTextReader: FocusedTextReading, SafeTextRep
             }
         }
 
-        // Some custom clients expose the editable value on the window or app
-        // root instead of publishing a focused child. Accept those roots only
-        // when both text and a valid selection range are available.
-        for root in [window, applicationRoot] {
-            do {
-                return try captureCandidate(root, system: system, originalFocus: nil,
-                    validationWindow: window, expectedPID: pid)
-            } catch let error as AccessibilityCaptureError {
-                switch error {
-                case .textUnavailable, .selectionUnavailable, .focusedElementUnavailable:
-                    lastError = error
-                default:
-                    throw error
-                }
-            }
-        }
-
-        // Chromium accessibility trees can be lazy. Search only the focused
-        // window, but allow enough time for its first tree materialization.
+        // Focus evidence is required. A role score is not permission to read or
+        // paste into a different field in the same window. Focus containers may
+        // own an editor descendant; otherwise only AXFocused nodes are eligible.
         let deadline = ContinuousClock.now.advanced(by: .milliseconds(900))
-        var queue: [(AXUIElement, Int)] = [(window, 0)]
+        var queue: [(AXUIElement, Int)] = [(applicationFocus ?? windowFocus ?? window, 0)]
+        if let first = queue.first, !CFEqual(first.0, window) { queue.append((window, 0)) }
         var index = 0
         var visited: [AXUIElement] = []
-        var fallback: [(AXUIElement, Int)] = []
+        var depthLimited = false
+        var descendants: [AXUIElement] = []
+        let focusRoot = applicationFocus ?? windowFocus
+        let rootRole = focusRoot.flatMap { axAttribute($0, kAXRoleAttribute) as? String }
+        let hasContainerFocus = focusRoot != nil && rootRole != "AXWindow" && rootRole != "AXApplication"
+        probe?.stop = .exhausted
 
         while index < queue.count, index < 320, ContinuousClock.now < deadline {
             let (current, depth) = queue[index]
             index += 1
             guard !visited.contains(where: { CFEqual($0, current) }) else { continue }
             visited.append(current)
+            probe?.nodes = visited.count
+            probe?.depth = max(probe?.depth ?? 0, depth)
+            guard AXEditorAccess.belongs(current, to: pid) else { continue }
+            if axAttribute(current, kAXSubroleAttribute) as? String == "AXSecureTextField" { continue }
 
             if isEditableCandidate(current) {
-                let score = candidateScore(current)
+                probe?.candidates += 1
                 if (axAttribute(current, "AXFocused") as? Bool) == true {
+                    probe?.focus = .focusedDescendant
                     do {
-                        return try captureCandidate(current, system: system, originalFocus: nil,
+                        return try captureFromFocused(current, system: system,
                             validationWindow: window, expectedPID: pid)
                     } catch let error as AccessibilityCaptureError {
+                        guard error == .textUnavailable || error == .selectionUnavailable else { throw error }
                         lastError = error
                     }
-                } else if fallback.count < 16 {
-                    fallback.append((current, score))
+                } else if hasContainerFocus, let focusRoot, isDescendant(current, of: focusRoot),
+                          isSettable(current, kAXValueAttribute) || isSettable(current, kAXSelectedTextAttribute) {
+                    descendants.append(current)
                 }
             }
 
             if depth < 12 {
                 let children = axChildren(of: current)
                 queue.append(contentsOf: children.prefix(max(0, 320 - queue.count)).map { ($0, depth + 1) })
-            }
+            } else { depthLimited = true }
         }
-
-        for (candidate, _) in fallback.sorted(by: { $0.1 > $1.1 }) {
-            do {
-                return try captureCandidate(candidate, system: system, originalFocus: nil,
-                    validationWindow: window, expectedPID: pid)
-            } catch let error as AccessibilityCaptureError {
-                lastError = error
-            }
+        let stop: CaptureDiagnostic.Stop = ContinuousClock.now >= deadline ? .timeLimit
+            : (index >= 320 || queue.count >= 320 ? .nodeLimit : (depthLimited ? .depthLimit : .exhausted))
+        probe?.stop = stop
+        // Only use uniqueness after a complete search of the focused subtree.
+        if stop == .exhausted,
+           let index = EditorCandidateSelection.uniqueFocusedDescendant(descendants.map { _ in true }) {
+            probe?.focus = .focusedDescendant
+            return try captureFromFocused(descendants[index], system: system,
+                validationWindow: window, expectedPID: pid)
         }
-        throw fallback.isEmpty ? .editableControlUnavailable : lastError
+        throw lastError == .focusedElementUnavailable ? .editableControlUnavailable : lastError
     }
 
     private func isEditableCandidate(_ element: AXUIElement) -> Bool {
         let role = axAttribute(element, kAXRoleAttribute) as? String ?? ""
         let editable = axAttribute(element, "AXEditable") as? Bool
-        let subrole = axAttribute(element, kAXSubroleAttribute) as? String ?? ""
-        let description = ((axAttribute(element, kAXRoleDescriptionAttribute) as? String)
-            ?? (axAttribute(element, kAXDescriptionAttribute) as? String) ?? "").lowercased()
+        guard editable != false else { return false }
         let textRole = ["AXTextField", "AXTextArea", "AXComboBox", "AXSearchField", "AXWebArea"].contains(role)
-        let semanticEditor = ["text field", "text area", "message", "editor", "input", "compose"]
-            .contains(where: { description.contains($0) })
-        let textSurface = axAttribute(element, kAXValueAttribute) != nil
-            || axAttribute(element, kAXNumberOfCharactersAttribute) != nil
-            || axAttribute(element, kAXSelectedTextRangeAttribute) != nil
-            || axAttribute(element, kAXSelectedTextAttribute) != nil
-        let settable = isSettable(element, kAXValueAttribute)
-            || isSettable(element, kAXSelectedTextAttribute)
-            || isSettable(element, kAXSelectedTextRangeAttribute)
-            || isSettable(element, kAXSelectedTextRangesAttribute)
-        guard textSurface || settable else { return false }
-        guard textRole || semanticEditor || editable == true || settable || subrole == "AXTextArea" else {
-            return false
-        }
+        guard textRole || editable == true || axAttribute(element, "AXFocused") as? Bool == true else { return false }
         return (axAttribute(element, kAXEnabledAttribute) as? Bool) != false
-    }
-
-    private func candidateScore(_ element: AXUIElement) -> Int {
-        let role = axAttribute(element, kAXRoleAttribute) as? String
-        let description = ((axAttribute(element, kAXRoleDescriptionAttribute) as? String)
-            ?? (axAttribute(element, kAXDescriptionAttribute) as? String) ?? "").lowercased()
-        let semantic = description.contains("message") || description.contains("editor") || description.contains("input")
-        switch role {
-        case "AXTextArea": return semantic ? 90 : 80
-        case "AXTextField", "AXSearchField": return semantic ? 85 : 70
-        case "AXComboBox": return 60
-        case "AXWebArea": return semantic ? 65 : 35
-        default: return semantic ? 55 : 40
-        }
     }
 
     private func isSettable(_ element: AXUIElement, _ name: String) -> Bool {
@@ -248,38 +259,34 @@ public final class MacOSAccessibilityTextReader: FocusedTextReading, SafeTextRep
         return AXUIElementIsAttributeSettable(element, name as CFString, &value) == .success && value.boolValue
     }
 
-    private func enableEnhancedAccessibility(on element: AXUIElement) {
-        _ = AXUIElementSetAttributeValue(element, "AXEnhancedUserInterface" as CFString, kCFBooleanTrue)
+    private func isDescendant(_ node: AXUIElement, of root: AXUIElement) -> Bool {
+        var candidate: AXUIElement? = node
+        for _ in 0..<12 {
+            guard let current = candidate else { break }
+            if CFEqual(current, root) { return true }
+            candidate = parent(of: current)
+        }
+        return false
     }
+
 
     /// Electron/WebKit sometimes exposes the editable node through AXContents or
     /// AXVisibleChildren instead of AXChildren. Read all bounded structural paths,
     /// preserving the focused-window-only scope.
     private func axChildren(of element: AXUIElement) -> [AXUIElement] {
-        var result: [AXUIElement] = []
-        for name in [kAXChildrenAttribute, kAXVisibleChildrenAttribute,
-                     kAXContentsAttribute, kAXRowsAttribute, kAXColumnsAttribute] {
-            guard let value = axAttribute(element, name),
-                  CFGetTypeID(value) == CFArrayGetTypeID() else { continue }
-            let array = value as! CFArray
-            for index in 0..<CFArrayGetCount(array) {
-                guard let raw = CFArrayGetValueAtIndex(array, index) else { continue }
-                let child = unsafeBitCast(raw, to: AXUIElement.self)
-                guard CFGetTypeID(child) == AXUIElementGetTypeID(),
-                      !result.contains(where: { CFEqual($0, child) }) else { continue }
-                result.append(child)
-            }
-        }
-        return result
+        AXEditorAccess.children(element, probe: probe)
     }
 
     private func axAttribute(_ element: AXUIElement, _ name: String) -> CFTypeRef? {
         // A malformed or lazy web accessibility node must not hold the global
         // shortcut for seconds. Direct capture uses its own longer timeout when
         // it has already identified the editor.
-        AXUIElementSetMessagingTimeout(element, 0.12)
-        var value: CFTypeRef?
-        return AXUIElementCopyAttributeValue(element, name as CFString, &value) == .success ? value : nil
+        let api: CaptureDiagnostic.API? = switch name {
+        case kAXFocusedWindowAttribute: .focusedWindow
+        case kAXFocusedUIElementAttribute: .applicationFocus
+        default: nil
+        }
+        return AXEditorAccess.attribute(element, name, probe: probe, api: api)
     }
 
     private func axElement(_ owner: AXUIElement, _ name: String) -> AXUIElement? {
@@ -298,6 +305,7 @@ public final class MacOSAccessibilityTextReader: FocusedTextReading, SafeTextRep
                                   originalFocus: AXUIElement?, validationWindow: AXUIElement? = nil,
                                   expectedPID: pid_t? = nil) throws -> TextSnapshot {
         AXUIElementSetMessagingTimeout(focused, 0.5)
+        probe?.textLength = nil; probe?.selection = nil; probe?.editable = nil
 
         var subrole: CFTypeRef?
         _ = AXUIElementCopyAttributeValue(focused, kAXSubroleAttribute as CFString, &subrole)
@@ -316,14 +324,21 @@ public final class MacOSAccessibilityTextReader: FocusedTextReading, SafeTextRep
             throw AccessibilityCaptureError.applicationNotAllowed
         }
         guard pid != ProcessInfo.processInfo.processIdentifier else { throw AccessibilityCaptureError.applicationNotAllowed }
+        guard NSWorkspace.shared.frontmostApplication?.processIdentifier == pid,
+              expectedPID == nil || expectedPID == pid else { throw AccessibilityCaptureError.focusChangedDuringCapture }
+        if let validationWindow, let ownerWindow = axElement(focused, kAXWindowAttribute),
+           !CFEqual(validationWindow, ownerWindow) { throw AccessibilityCaptureError.focusChangedDuringCapture }
+        probe?.role = CaptureDiagnostic.Role(systemRole: axAttribute(focused, kAXRoleAttribute) as? String)
 
         guard let text = try readText(from: focused) else {
             throw AccessibilityCaptureError.textUnavailable
         }
+        probe?.textLength = text.utf16.count
 
-        guard let range = try AXSelectionRange.read(focused) else {
+        guard let range = try AXSelectionRange.read(focused, probe: probe) else {
             throw AccessibilityCaptureError.selectionUnavailable
         }
+        probe?.selection = range
 
         let length = (text as NSString).length
         guard length <= 65_536 else {
@@ -331,6 +346,10 @@ public final class MacOSAccessibilityTextReader: FocusedTextReading, SafeTextRep
         }
         guard range.location <= length,
               range.length <= length - range.location else {
+            throw AccessibilityCaptureError.invalidSelection
+        }
+        if range.length > 0, let selected = textValue(axAttribute(focused, kAXSelectedTextAttribute)),
+           !selected.isEmpty, (text as NSString).substring(with: range) != selected {
             throw AccessibilityCaptureError.invalidSelection
         }
 
@@ -373,7 +392,10 @@ public final class MacOSAccessibilityTextReader: FocusedTextReading, SafeTextRep
             enabled: (attribute(kAXEnabledAttribute) as? Bool) != false,
             explicitlyEditable: attribute("AXEditable") as? Bool,
             valueSettable: settable(kAXValueAttribute), selectedTextSettable: settable(kAXSelectedTextAttribute),
-            rangeSettable: settable(kAXSelectedTextRangeAttribute) || settable(kAXSelectedTextRangesAttribute))
+            rangeSettable: settable(kAXSelectedTextRangeAttribute) || settable(kAXSelectedTextRangesAttribute)
+                || settable("AXSelectedTextMarkerRange"))
+        probe?.editable = capabilities?.editable
+        probe?.stop = .matched
 
         // AX has no universal edit revision. This is a content fingerprint;
         // replacement must still compare the full source and focused element.
@@ -403,28 +425,33 @@ public final class MacOSAccessibilityTextReader: FocusedTextReading, SafeTextRep
     /// use that bounded range API before refusing the request. This does not use Copy or
     /// infer a range from selected text, so the sentence boundary remains authoritative.
     private func readText(from element: AXUIElement) throws -> String? {
-        var value: CFTypeRef?
-        if AXUIElementCopyAttributeValue(element, kAXValueAttribute as CFString, &value) == .success,
-           let text = textValue(value) {
-            return text
+        let direct = textValue(AXEditorAccess.attribute(element, kAXValueAttribute, probe: probe, api: .value))
+        if let direct, !direct.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { return direct }
+        if direct != nil { probe?.emptyValues += 1 }
+        let countValue = AXEditorAccess.attribute(element, kAXNumberOfCharactersAttribute, probe: probe, api: .characterCount)
+        var count = (countValue as? NSNumber)?.intValue
+        if count == nil || count == 0,
+           let end = AXEditorAccess.attribute(element, "AXEndTextMarker"),
+           let index = AXEditorAccess.parameter(element, "AXIndexForTextMarker", end, probe: probe, api: .markerIndex) as? NSNumber {
+            count = index.intValue
         }
-
-        var countValue: CFTypeRef?
-        guard AXUIElementCopyAttributeValue(
-            element, kAXNumberOfCharactersAttribute as CFString, &countValue
-        ) == .success,
-        let count = (countValue as? NSNumber)?.intValue,
-        count >= 0, count <= 65_536 else {
-            return nil
+        return try AXTextContent.resolve(value: direct, count: count) { requested in
+          var range = CFRange(location: requested.location, length: requested.length)
+          guard let argument = AXValueCreate(.cfRange, &range) else { return nil }
+          for (name, api) in [(kAXStringForRangeParameterizedAttribute, CaptureDiagnostic.API.stringForRange),
+                            (kAXAttributedStringForRangeParameterizedAttribute, .attributedStringForRange)] {
+            if let text = textValue(AXEditorAccess.parameter(element, name, argument, probe: probe, api: api)),
+               text.utf16.count == requested.length, !text.isEmpty { return text }
+          }
+          if let start = AXEditorAccess.attribute(element, "AXStartTextMarker"),
+           let end = AXEditorAccess.attribute(element, "AXEndTextMarker"),
+           CFGetTypeID(start) == AXTextMarkerGetTypeID(), CFGetTypeID(end) == AXTextMarkerGetTypeID() {
+            let markers = AXTextMarkerRangeCreate(nil, start as! AXTextMarker, end as! AXTextMarker)
+            if let text = textValue(AXEditorAccess.parameter(element, "AXStringForTextMarkerRange", markers)),
+               text.utf16.count == requested.length { return text }
+          }
+          return nil
         }
-        var range = CFRange(location: 0, length: count)
-        guard let argument = AXValueCreate(.cfRange, &range) else { return nil }
-        var rangedValue: CFTypeRef?
-        guard AXUIElementCopyParameterizedAttributeValue(
-            element, kAXStringForRangeParameterizedAttribute as CFString,
-            argument, &rangedValue
-        ) == .success else { return nil }
-        return textValue(rangedValue)
     }
 
     private func textValue(_ value: CFTypeRef?) -> String? {
