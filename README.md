@@ -9,7 +9,7 @@ speakers. Keep your existing input method, write what you can, and use Chinese
 for expression gaps. Ask for help with your current sentence; necessary English
 corrections preserve your meaning, opinions and voice. Learning opens on demand.
 
-## Status: T3 experience build (0.5.2 / build 9)
+## Status: T3 experience build (0.5.2 / build 15)
 
 The first T3 slice adds **Control-Option-D** read-only contextual explanations for
 accessible selections across apps. Selected words/phrases receive their meaning
@@ -18,7 +18,9 @@ no context is invented. Native text ranges and WebKit text markers are supported
 with bounded front-window selection discovery for document/PDF views. Text PDFs
 are targets; scanned PDFs require OCR and are outside this stage.
 
-Enable other-app access explicitly in settings. Requests reuse your endpoint,
+Enable other-app access explicitly in settings. Build 15 adds bounded, content-free
+capture diagnostics for each explicit writing/reading request, and retries one lazy
+AX tree read after a short settle window. Requests reuse your endpoint,
 Keychain credential and network switch: selection ≤1200 UTF-16 units, total context
 ≤2000; 1400 output tokens / 20 seconds. No clipboard-based capture or read-only edits.
 See [global experience steps](docs/t3-global-experience.md). Real-app compatibility
@@ -32,7 +34,8 @@ guarded native paste, with attributed runs when available and plain text for con
 exposing no attributed text. Editors own native undo and typing style. WeChat, Notes,
 Safari, VS Code and Codex are compatibility targets, not a hardcoded product allowlist.
 Actual app-specific behavior is pending user experience; inaccessible custom controls
-may still need adapters. Accepting a chat draft never generates a Return/send action.
+may still need adapters. Build 15 specifically expands Word, VS Code, WeChat and Safari
+capture paths while refusing ambiguous controls. Accepting a chat draft never generates a Return/send action.
 Single-selection controls exposing only the plural AX range attribute are also supported.
 Writing refuses multiple selections/carets before requesting or accepting a proposal.
 Read-only document capture can use the focused window when no editable focus exists;
@@ -79,7 +82,8 @@ The TextEdit baseline and shared writing behavior include:
   At most five 1 MiB JSON Lines log files per channel, seven-day retention and a
   256-event queue. No telemetry, text/clipboard/prompt/credential logging or log uploads.
 
-Diagnostics settings and experience checks: [T2.1 local diagnostics](docs/diagnostics-experience.md).
+Diagnostics settings and experience checks: [build 15 capture and local diagnostics](docs/t3-capture-build15-experience.md),
+[T2.1 local diagnostics](docs/diagnostics-experience.md).
 
 Automated tests use synthetic in-memory responses. Users evaluate TextEdit UI,
 real-model quality and their input-method experience. The draft stays unchanged
