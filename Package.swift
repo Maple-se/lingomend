@@ -29,7 +29,7 @@ let package = Package(
         ),
         .executableTarget(
             name: "LingoMendApp",
-            dependencies: ["CoachCore", "LearningCore", "MVPFlow", "PlatformBridge", "DiagnosticsCore"]
+            dependencies: ["CoachCore", "MVPFlow", "PlatformBridge", "DiagnosticsCore"]
         ),
         .testTarget(
             name: "DiagnosticsCoreTests", dependencies: ["DiagnosticsCore"]

@@ -49,7 +49,7 @@ until feedback or authorization to continue.
   with synthetic tests; real-provider settings and aggregate statistics are
   disabled in the Stage 1 application.
 
-User testing: [Stage 1 experience](stage-1-experience.md).
+Current user testing: [T3 global experience](t3-global-experience.md). The Stage 1 in-app input prototype has been retired.
 Detailed validation outcomes remain local and ignored.
 
 ## Next

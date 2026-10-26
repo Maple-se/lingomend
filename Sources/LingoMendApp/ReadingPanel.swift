@@ -15,24 +15,21 @@ final class ReadingPanel {
 
     func show(request: ReadingRequest, explanation: ReadingExplanation, anchor: CGRect?,
               onDismiss: @escaping @MainActor () -> Void) {
-        let size = NSSize(width: 440, height: 330)
-        let panel = self.panel ?? NonActivatingReadingPanel(contentRect: NSRect(origin: .zero, size: size),
+        let visibleText = request.selection.count + explanation.meaning.count + explanation.contextMeaning.count
+            + explanation.usage.count
+        let height = min(480, max(330, 270 + CGFloat((visibleText + 49) / 50) * 20))
+        let frame = PanelPlacement.frame(anchor: anchor, preferredSize: NSSize(width: 460, height: height))
+        let panel = self.panel ?? NonActivatingReadingPanel(contentRect: frame,
             styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
         panel.level = .floating; panel.isFloatingPanel = true; panel.hidesOnDeactivate = false
         panel.hasShadow = true; panel.isOpaque = false; panel.backgroundColor = .clear
         panel.collectionBehavior = [.moveToActiveSpace, .fullScreenAuxiliary]
         panel.contentView = NSHostingView(rootView: ReadingView(request: request, explanation: explanation, onDismiss: onDismiss))
         // Missing AX bounds may use the pointer for a read-only card, never as an edit address.
-        let top = NSScreen.screens.first?.frame.maxY ?? 0
-        let selection = anchor.map { NSRect(x: $0.minX, y: top - $0.maxY, width: $0.width, height: $0.height) }
-            ?? NSRect(origin: NSEvent.mouseLocation, size: NSSize(width: 1, height: 1))
-        let area = (NSScreen.screens.first { $0.frame.intersects(selection) } ?? NSScreen.main)?.visibleFrame
-            ?? NSRect(x: 0, y: 0, width: 1000, height: 800)
-        let x = min(max(selection.minX, area.minX + 8), area.maxX - size.width - 8)
-        let y = selection.minY - size.height - 8 >= area.minY ? selection.minY - size.height - 8
-            : min(selection.maxY + 8, area.maxY - size.height - 8)
-        panel.setFrame(NSRect(origin: NSPoint(x: x, y: y), size: size), display: true)
+        panel.setFrame(frame, display: true)
         panel.orderFrontRegardless(); self.panel = panel
+        NSAccessibility.post(element: panel, notification: .announcementRequested,
+                             userInfo: [.announcement: "语境解释已显示，只读。"])
     }
 }
 
@@ -42,35 +39,41 @@ private struct ReadingView: View {
     let onDismiss: () -> Void
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            HStack(alignment: .firstTextBaseline) {
-                Text("语境解释").font(.system(size: 12, weight: .medium)).foregroundStyle(.secondary)
+            HStack {
+                Label("语境解释", systemImage: "text.magnifyingglass").font(.headline)
                 Spacer()
-                Button(action: onDismiss) { Image(systemName: "xmark").font(.system(size: 11, weight: .semibold)) }
-                    .buttonStyle(.plain).accessibilityLabel("关闭语境解释")
+                Button("关闭", action: onDismiss).frame(minWidth: 60, minHeight: 44)
+                    .accessibilityLabel("关闭语境解释")
             }
             ScrollView {
-                VStack(alignment: .leading, spacing: 10) {
-                    Text(request.selection).font(.system(size: 17, weight: .semibold))
-                        .fixedSize(horizontal: false, vertical: true)
+                VStack(alignment: .leading, spacing: 12) {
+                    section("选中内容", text: request.selection)
                     if request.contextKind == .selectionOnly {
                         Text("仅解释选中文字；未取得周围语境。").font(.caption).foregroundStyle(.secondary)
                     } else if request.contextKind == .excerpt {
                         Text("依据读取到的片段解释；上下文可能不完整。").font(.caption).foregroundStyle(.secondary)
                     }
-                    Text(explanation.meaning).font(.system(size: 14)).lineSpacing(3)
+                    section("中文含义", text: explanation.meaning)
                     if request.contextKind != .selectionOnly {
-                        Divider()
-                        Text(request.context).font(.system(size: 12)).foregroundStyle(.secondary).lineSpacing(2)
-                        Text(explanation.contextMeaning).font(.system(size: 13)).lineSpacing(3)
+                        section("所在语境", text: request.context)
+                        section("语境中的理解", text: explanation.contextMeaning)
                     }
                     if !explanation.usage.isEmpty {
-                        Text(explanation.usage).font(.system(size: 12)).foregroundStyle(.secondary).lineSpacing(2)
+                        section("用法", text: explanation.usage)
                     }
                 }.frame(maxWidth: .infinity, alignment: .leading)
             }
-            Text("只读解释 · Esc / ⌃⌥. 关闭").font(.system(size: 10)).foregroundStyle(.secondary)
-        }.padding(14).frame(width: 440, height: 330)
-            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12))
-            .overlay(RoundedRectangle(cornerRadius: 12).stroke(.primary.opacity(0.12)))
+            Text("只读 · Esc / ⌃⌥. 收起").font(.caption).foregroundStyle(.secondary)
+        }.padding(16).frame(maxWidth: .infinity, maxHeight: .infinity)
+            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 16))
+            .overlay(RoundedRectangle(cornerRadius: 16).stroke(.primary.opacity(0.15)))
+    }
+
+    private func section(_ title: String, text: String) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(title).font(.caption).foregroundStyle(.secondary)
+            Text(text).font(.body).textSelection(.enabled)
+                .fixedSize(horizontal: false, vertical: true)
+        }
     }
 }

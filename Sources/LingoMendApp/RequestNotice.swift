@@ -11,13 +11,16 @@ final class RequestNotice {
     hideTask = nil
     panel?.orderOut(nil)
   }
-  func show(_ message: String, near button: NSStatusBarButton?, persistent: Bool = false) {
+  func show(_ message: String, near button: NSStatusBarButton?, persistent: Bool = false,
+            actionTitle: String? = nil, action: (@MainActor () -> Void)? = nil) {
     hide()
     let area = button?.window?.screen?.visibleFrame ?? NSScreen.main?.visibleFrame ?? .zero
+    let width: CGFloat = min(380, max(280, area.width - 16))
+    let height: CGFloat = action == nil ? 96 : 132
     let panel =
       self.panel
       ?? NoticePanel(
-        contentRect: NSRect(x: 0, y: 0, width: 340, height: 70),
+        contentRect: NSRect(x: 0, y: 0, width: width, height: height),
         styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
     panel.level = .floating
     panel.hidesOnDeactivate = false
@@ -26,12 +29,19 @@ final class RequestNotice {
     panel.hasShadow = true
     panel.collectionBehavior = [.moveToActiveSpace, .fullScreenAuxiliary]
     panel.contentView = NSHostingView(
-      rootView: Text(message).font(.system(size: 12))
-        .padding(12).frame(width: 340, height: 70, alignment: .leading)
-        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 10)))
+      rootView: VStack(alignment: .leading, spacing: 8) {
+        Text(message).font(.callout).fixedSize(horizontal: false, vertical: true)
+        if let actionTitle, let action {
+          Button(actionTitle, action: action).frame(minHeight: 44)
+        }
+      }
+      .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
+      .padding(12)
+      .frame(width: width, height: height)
+      .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12)))
     let x = min(
-      max((button?.window?.frame.midX ?? area.maxX) - 170, area.minX + 8), area.maxX - 348)
-    panel.setFrame(NSRect(x: x, y: area.maxY - 78, width: 340, height: 70), display: true)
+      max((button?.window?.frame.midX ?? area.maxX) - width / 2, area.minX + 8), area.maxX - width - 8)
+    panel.setFrame(NSRect(x: x, y: area.maxY - height - 8, width: width, height: height), display: true)
     panel.orderFrontRegardless()
     self.panel = panel
     if !persistent {

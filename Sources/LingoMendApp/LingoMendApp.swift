@@ -18,7 +18,7 @@ enum LingoMendApp {
 
 /// Explicit writing advice and read-only contextual interpretation share one cancellable session.
 @MainActor
-private final class LingoMendDelegate: NSObject, NSApplicationDelegate {
+private final class LingoMendDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private let reader = MacOSAccessibilityTextReader()
     private let readingReader = MacOSReadingSelectionReader()
     private let observer = MacOSFocusedTextObserver()
@@ -33,6 +33,10 @@ private final class LingoMendDelegate: NSObject, NSApplicationDelegate {
     private var preferences = AppPreferences.load()
     private var statusItem: NSStatusItem?
     private var statusLine: NSMenuItem?
+    private var modeLine: NSMenuItem?
+    private var helpKeyLine: NSMenuItem?
+    private var readKeyLine: NSMenuItem?
+    private var permissionLine: NSMenuItem?
     private var trigger: GlobalHotKey?
     private var readingKey: GlobalHotKey?
     private var dismissKey: GlobalHotKey?
@@ -70,37 +74,61 @@ private final class LingoMendDelegate: NSObject, NSApplicationDelegate {
         }
         NSApp.setActivationPolicy(.accessory)
         let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
-        item.button?.title = "LM"
+        let symbol = NSImage(systemSymbolName: "text.bubble", accessibilityDescription: "LingoMend，写作助手")
+        symbol?.isTemplate = true
+        item.button?.image = symbol
+        item.button?.title = symbol == nil ? "LM" : ""
+        item.button?.toolTip = "LingoMend · 按需写作与阅读"
+        item.button?.setAccessibilityLabel("LingoMend，写作助手")
         let menu = NSMenu()
-        let status = NSMenuItem(title: service.modeLabel, action: nil, keyEquivalent: "")
+        menu.delegate = self
+        let heading = NSMenuItem(title: "LingoMend", action: nil, keyEquivalent: "")
+        heading.isEnabled = false; menu.addItem(heading)
+        let mode = NSMenuItem(title: "", action: nil, keyEquivalent: "")
+        mode.isEnabled = false; modeLine = mode; menu.addItem(mode)
+        let status = NSMenuItem(title: "就绪 · 先在编辑器写作，再按快捷键求助", action: nil, keyEquivalent: "")
         status.isEnabled = false; statusLine = status; menu.addItem(status)
         let shortVersion = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "development"
         let build = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "unknown"
-        let version = NSMenuItem(title: "LingoMend \(shortVersion) (build \(build)) · T3 开发版", action: nil, keyEquivalent: "")
+        let version = NSMenuItem(title: "LingoMend \(shortVersion) (build \(build))", action: nil, keyEquivalent: "")
         version.isEnabled = false; menu.addItem(version)
-        add("设置…", action: #selector(showSettings), to: menu)
         menu.addItem(.separator())
-        let hint = NSMenuItem(title: "求助 ⌃⌥L · 接受 ⌃⌥↩ · 取消 Esc / ⌃⌥.", action: nil, keyEquivalent: "")
-        hint.isEnabled = false; menu.addItem(hint)
-        let readingHint = NSMenuItem(title: "选词 / 选句解释 ⌃⌥D", action: nil, keyEquivalent: "")
-        readingHint.isEnabled = false; menu.addItem(readingHint)
-        add("开启辅助功能权限…", action: #selector(requestAccessibility), to: menu)
+        let help = NSMenuItem(title: "⌃⌥L  写作帮助", action: nil, keyEquivalent: "")
+        help.isEnabled = false; helpKeyLine = help; menu.addItem(help)
+        let read = NSMenuItem(title: "⌃⌥D  阅读选区", action: nil, keyEquivalent: "")
+        read.isEnabled = false; readKeyLine = read; menu.addItem(read)
+        let acceptHint = NSMenuItem(title: "候选中：⌃⌥↩ 接受 · Esc / ⌃⌥. 收起", action: nil, keyEquivalent: "")
+        acceptHint.isEnabled = false; menu.addItem(acceptHint)
+        menu.addItem(.separator())
+        add("设置…", action: #selector(showSettings), to: menu)
+        let permission = NSMenuItem(title: "", action: #selector(requestAccessibility), keyEquivalent: "")
+        permission.target = self; permissionLine = permission; menu.addItem(permission)
         menu.addItem(.separator())
         add("退出 LingoMend", action: #selector(quitApp), to: menu)
         item.menu = menu; statusItem = item
         let hotKey = GlobalHotKey { [weak self] in self?.requestAdvice() }
         trigger = hotKey
         triggerRegistered = hotKey.register()
-        if !triggerRegistered { status.title = "⌃⌥L 注册失败；请检查快捷键冲突" }
         let reading = GlobalHotKey(keyCode: UInt32(kVK_ANSI_D), identifier: 5) { [weak self] in self?.requestReading() }
         readingKey = reading; readingRegistered = reading.register()
-        if !readingRegistered { status.title = "⌃⌥D 注册失败；请检查快捷键冲突" }
+        refreshMenu()
         observer.onChange = { [weak self] in self?.checkObservedChange() }
         observer.onUnavailable = { [weak self] in self?.discardChangedPreview(reason: .focusChanged) }
         reader.allowedApplications = []
     }
     private var triggerRegistered = false
     private var readingRegistered = false
+
+    func menuWillOpen(_ menu: NSMenu) { refreshMenu() }
+
+    private func refreshMenu() {
+        modeLine?.title = preferences.networkEnabled ? "状态：模型服务已开启" : "状态：本地固定样例"
+        helpKeyLine?.title = triggerRegistered ? "⌃⌥L  写作帮助" : "⌃⌥L  注册失败，请检查快捷键冲突"
+        readKeyLine?.title = readingRegistered ? "⌃⌥D  阅读选区" : "⌃⌥D  注册失败，请检查快捷键冲突"
+        let trusted = AXIsProcessTrusted()
+        permissionLine?.title = trusted ? "辅助功能权限：已授权" : "辅助功能权限：需要授权…"
+        permissionLine?.isEnabled = !trusted
+    }
 
     private func add(_ title: String, action: Selector, to menu: NSMenu) {
         let item = NSMenuItem(title: title, action: action, keyEquivalent: "")
@@ -109,6 +137,7 @@ private final class LingoMendDelegate: NSObject, NSApplicationDelegate {
     @objc private func requestAccessibility() {
         let trusted = AXIsProcessTrustedWithOptions(["AXTrustedCheckOptionPrompt": true] as CFDictionary)
         record(DiagnosticEvent(.permissionChecked, outcome: trusted ? .success : .refused))
+        refreshMenu()
     }
     @objc private func quitApp() { NSApp.terminate(nil) }
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
@@ -135,14 +164,16 @@ private final class LingoMendDelegate: NSObject, NSApplicationDelegate {
             invalidate(reason: .settingsChanged); preferences = updated
             service = SentenceService(preferences: updated, diagnostics: diagnostics.recorder)
             readingService = ReadingService(preferences: updated, diagnostics: diagnostics.recorder)
-            statusLine?.title = service.modeLabel
+            refreshMenu()
         }
     }
 
-    private func feedback(_ text: String, persistent: Bool = false) {
+    private func feedback(_ text: String, persistent: Bool = false,
+                          actionTitle: String? = nil, action: (@MainActor () -> Void)? = nil) {
         diagnostics.refresh()
         statusLine?.title = text
-        notice.show(text, near: statusItem?.button, persistent: persistent)
+        notice.show(text, near: statusItem?.button, persistent: persistent,
+                    actionTitle: actionTitle, action: action)
     }
 
     private func checkObservedChange() {
@@ -222,7 +253,8 @@ private final class LingoMendDelegate: NSObject, NSApplicationDelegate {
               preferences.globalAccessEnabled || preferences.allowedApplications.contains(identifier) else {
             record(DiagnosticEvent(.helpFailed, outcome: .refused, reason: .applicationNotAllowed),
                 operation: operation, application: application)
-            feedback("请在设置中允许其他应用的按需求助，或勾选 TextEdit"); return
+            feedback("请在设置中允许当前应用，或勾选 TextEdit", actionTitle: "打开设置",
+                     action: { [weak self] in self?.showSettings() }); return
         }
         activeApplication = application
         reader.allowedApplications = [identifier]
@@ -302,7 +334,8 @@ private final class LingoMendDelegate: NSObject, NSApplicationDelegate {
             }
             catch AccessibilityCaptureError.permissionRequired {
                 logFailure(AccessibilityCaptureError.permissionRequired)
-                if epoch == token { feedback("需要辅助功能权限；从 LM 菜单手动开启") }
+                if epoch == token { feedback("需要辅助功能权限；请在系统设置中授权 LingoMend",
+                    actionTitle: "打开设置", action: { [weak self] in self?.showSettings() }) }
             } catch let error as AccessibilityCaptureError {
                 logFailure(error)
                 guard epoch == token else { return }
@@ -332,7 +365,8 @@ private final class LingoMendDelegate: NSObject, NSApplicationDelegate {
                 case .applicationNotAllowed:
                     feedback("请在设置中允许当前应用的按需求助")
                 case .permissionRequired:
-                    feedback("需要辅助功能权限；从 LM 菜单手动开启")
+                    feedback("需要辅助功能权限；请在系统设置中授权 LingoMend",
+                        actionTitle: "打开设置", action: { [weak self] in self?.showSettings() })
                 }
             } catch let error as SentenceScopeError {
                 logFailure(error)
@@ -365,7 +399,8 @@ private final class LingoMendDelegate: NSObject, NSApplicationDelegate {
               preferences.globalAccessEnabled || preferences.allowedApplications.contains(identifier) else {
             record(DiagnosticEvent(.readingFailed, outcome: .refused,
                 reason: .applicationNotAllowed, shortcut: .read), operation: token, application: application)
-            feedback("请在设置中允许其他应用的按需读取，或先在已允许的 TextEdit 中体验"); return
+            feedback("请在设置中允许当前应用，或先在已允许的 TextEdit 中体验",
+                actionTitle: "打开设置", action: { [weak self] in self?.showSettings() }); return
         }
         activeApplication = application
         observer.configure(enabled: true, allowedApplications: [identifier])
@@ -418,7 +453,8 @@ private final class LingoMendDelegate: NSObject, NSApplicationDelegate {
                         reason: diagnosticReason(error), stage: stage, shortcut: .read), operation: token)
                 }
                 if case AccessibilityCaptureError.permissionRequired = error {
-                    feedback("需要辅助功能权限；从 LM 菜单手动开启")
+                    feedback("需要辅助功能权限；请在系统设置中授权 LingoMend",
+                        actionTitle: "打开设置", action: { [weak self] in self?.showSettings() })
                 } else if case AccessibilityCaptureError.disjointSelection = error {
                     feedback("请选择一个连续的词句范围，再按 ⌃⌥D")
                 } else if case ReadingScopeError.tooLong = error {

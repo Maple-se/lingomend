@@ -1,20 +1,59 @@
 import AppKit
+import ApplicationServices
 import CoachCore
 import SwiftUI
 import DiagnosticsCore
 
 @MainActor
-final class SettingsWindow {
+final class SettingsWindow: NSObject, NSWindowDelegate {
     private var window: NSWindow?
+    private var hasUnsavedChanges = false
     func show(preferences: AppPreferences, diagnostics: AppDiagnostics, onSave: @escaping @MainActor (AppPreferences) -> Void) {
-        let window = self.window ?? NSWindow(contentRect: NSRect(x: 0, y: 0, width: 560, height: 650),
-                              styleMask: [.titled, .closable], backing: .buffered, defer: false)
+        if let window, window.isVisible {
+            window.makeKeyAndOrderFront(nil)
+            NSApp.activate(ignoringOtherApps: true)
+            return
+        }
+        let window = self.window ?? NSWindow(contentRect: NSRect(x: 0, y: 0, width: 760, height: 620),
+                              styleMask: [.titled, .closable, .resizable], backing: .buffered, defer: false)
         window.title = "LingoMend · 设置"
         window.isReleasedWhenClosed = false
-        window.contentView = NSHostingView(rootView: SettingsView(preferences: preferences, diagnostics: diagnostics, window: window, onSave: onSave))
+        window.minSize = NSSize(width: 680, height: 500)
+        window.delegate = self
+        hasUnsavedChanges = false
+        window.contentView = NSHostingView(rootView: SettingsView(preferences: preferences, diagnostics: diagnostics,
+            window: window, onSave: onSave, onDirtyChange: { [weak self] in self?.hasUnsavedChanges = $0 }))
         window.center(); window.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
         self.window = window
+    }
+
+    func windowShouldClose(_ sender: NSWindow) -> Bool {
+        guard hasUnsavedChanges else { return true }
+        let alert = NSAlert()
+        alert.messageText = "放弃未保存的设置？"
+        alert.informativeText = "修改尚未保存。"
+        alert.addButton(withTitle: "继续编辑")
+        alert.addButton(withTitle: "放弃修改")
+        let discard = alert.runModal() == .alertSecondButtonReturn
+        if discard { hasUnsavedChanges = false }
+        return discard
+    }
+}
+
+private enum SettingsTab: String, CaseIterable, Identifiable {
+    case general = "常规"
+    case access = "访问与应用"
+    case service = "模型服务"
+    case diagnostics = "本地诊断"
+    var id: String { rawValue }
+    var symbol: String {
+        switch self {
+        case .general: "slider.horizontal.3"
+        case .access: "hand.raised"
+        case .service: "network"
+        case .diagnostics: "waveform.path.ecg"
+        }
     }
 }
 
@@ -23,87 +62,167 @@ private struct SettingsView: View {
     @ObservedObject var diagnostics: AppDiagnostics
     let window: NSWindow
     let onSave: @MainActor (AppPreferences) -> Void
+    let onDirtyChange: @MainActor (Bool) -> Void
+    @State private var baseline: AppPreferences?
+    @State private var selectedTab: SettingsTab? = .general
+    @State private var accessibilityTrusted = AXIsProcessTrusted()
     @State private var key = ""
     @State private var removeKey = false
+    @State private var confirmRemoveKey = false
     @State private var status = ""
     @State private var testTask: Task<Void, Never>?
     @State private var testEpoch = UUID()
 
     var body: some View {
-        ScrollView {
-            Form {
-                Section("全局按需求助 · T3") {
-                    Text("后台安静运行。可编辑区域按 ⌃⌥L：无选区处理当前句；选词句时结合所在句；明确选中短段落时只处理所选内容。先看建议和变化，明确接受才修改原文。")
-                        .font(.caption).foregroundStyle(.secondary)
-                    appToggle("TextEdit", id: "com.apple.TextEdit")
-                    Toggle("允许其他应用的按需求助", isOn: $preferences.globalAccessEnabled)
-                    Text("⌃⌥D：选中英文词句，查看语境含义。开启后可在其他应用的可访问选区使用；不会后台扫描，不使用复制来读取，不修改只读文本。")
-                        .font(.caption).foregroundStyle(.secondary)
-                    Text("⌃⌥↩ 接受；Esc / ⌃⌥. 取消。原编辑器用 ⌘Z 撤销。输入或焦点变化使候选失效；普通 Return、Tab 和输入法组词键保持原来的行为。聊天输入框接受时只粘贴，不发送消息。")
-                        .font(.caption)
-                    Text("接受时临时借用系统剪贴板执行一次原生粘贴，保存原内容并在仍属本次操作时恢复；检测到新复制内容则保留它。无法保存剪贴板或保持格式时拒绝粘贴。剪贴板历史工具可能记录临时内容。")
-                        .font(.caption).foregroundStyle(.secondary)
-                    Text("可访问的基础富文本保留字体、字号、粗斜体、颜色等样式；仅提供文本的控件使用纯文本粘贴，样式由编辑器处理。附件、链接和复杂布局需保留在选区外。应用实际兼容性由试用确认。")
-                        .font(.caption).foregroundStyle(.secondary)
+        NavigationSplitView {
+            List(selection: $selectedTab) {
+                ForEach(SettingsTab.allCases) { tab in
+                    Label(tab.rawValue, systemImage: tab.symbol).tag(tab)
                 }
-                Section("建议服务") {
-                    HStack {
-                        Text("DeepSeek · OpenAI-compatible Chat Completions")
-                        Button("恢复 DeepSeek 预设") {
-                            preferences.provider = DeepSeekExpressionProvider.preset
-                            preferences.networkEnabled = false
+            }
+            .navigationSplitViewColumnWidth(min: 170, ideal: 190)
+        } detail: {
+            VStack(spacing: 0) {
+                Form {
+                    switch selectedTab ?? .general {
+                    case .general: generalSection
+                    case .access: accessSection
+                    case .service: serviceSection
+                    case .diagnostics: DiagnosticsSettingsSection(diagnostics: diagnostics)
+                    }
+                }
+                .formStyle(.grouped)
+                Divider()
+                HStack(spacing: 12) {
+                    Text(status.isEmpty ? "修改设置后点“保存设置”" : status)
+                        .font(.callout).foregroundStyle(.secondary)
+                        .accessibilityAddTraits(.updatesFrequently)
+                    Spacer()
+                    Button("关闭") { window.performClose(nil) }.frame(minHeight: 44)
+                    Button("保存设置") { save() }
+                        .buttonStyle(.borderedProminent)
+                        .frame(minHeight: 44)
+                        .disabled(testTask != nil)
+                }
+                .padding(.horizontal, 20).padding(.vertical, 8)
+            }
+        }
+        .frame(minWidth: 680, minHeight: 500)
+        .onAppear {
+            baseline = preferences
+            accessibilityTrusted = AXIsProcessTrusted()
+        }
+        .onChange(of: preferences) { _, _ in
+            cancelTest(); status = "设置有改动，尚未保存"; updateDirty()
+        }
+        .onChange(of: preferences.provider.baseURL) { _, _ in
+            cancelTest(); key = ""; removeKey = false
+            status = "地址已更改；请填写该地址的密钥，或留空使用其已有密钥"
+            updateDirty()
+        }
+        .onChange(of: key) { _, _ in cancelTest(); updateDirty() }
+        .onChange(of: removeKey) { _, _ in cancelTest(); updateDirty() }
+        .onDisappear { cancelTest(); key = "" }
+        .onReceive(NotificationCenter.default.publisher(for: NSWindow.willCloseNotification, object: window)) { _ in
+            cancelTest(); key = ""
+        }
+        .confirmationDialog("删除此服务地址的已存密钥？", isPresented: $confirmRemoveKey) {
+            Button("删除密钥", role: .destructive) {
+                preferences.networkEnabled = false
+                removeKey = true
+                key = ""
+                status = "密钥将在保存设置时删除；模型服务已关闭"
+            }
+        } message: {
+            Text("删除后需要重新输入密钥才能使用模型服务。其他地址的密钥不受影响。")
+        }
+    }
+
+    private var generalSection: some View {
+        Section("按需使用") {
+            Text("先在原编辑器写作。按 ⌃⌥L 获取当前句或选区建议；先核对原文与修改，再明确接受。")
+                .font(.body)
+            Text("按 ⌃⌥D 阅读选中的英文词句与语境。阅读解释不会修改原文。")
+                .font(.body)
+            Text("候选出现后可按 ⌃⌥↩ 接受，按 Esc 或 ⌃⌥. 收起；在原编辑器按 ⌘Z 撤销。普通 Return、Tab 与输入法操作仍交给原编辑器。")
+                .font(.callout).foregroundStyle(.secondary)
+            Text(preferences.networkEnabled ? "模型服务已开启；每次按快捷键会发起按需请求。" : "当前使用固定本地样例；其他表达需开启模型服务。")
+                .font(.callout).foregroundStyle(.secondary)
+        }
+    }
+
+    private var accessSection: some View {
+        Group {
+            Section("辅助功能权限") {
+                Label(accessibilityTrusted ? "已授权" : "需要授权",
+                      systemImage: accessibilityTrusted ? "checkmark.circle.fill" : "exclamationmark.circle")
+                    .foregroundStyle(accessibilityTrusted ? .green : .orange)
+                Text("LingoMend 只在你按下快捷键后读取前台文字；接受前会重新检查原文、选区与焦点。")
+                    .font(.callout).foregroundStyle(.secondary)
+                HStack {
+                    Button("打开系统设置") {
+                        if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility") {
+                            NSWorkspace.shared.open(url)
                         }
                     }
-                    Toggle("使用配置的模型服务（否则仅本地固定演示）", isOn: $preferences.networkEnabled)
-                    Text("保存并开启后，⌃⌥L 发送当前句（最多 600 个 UTF-16 单位），或明确选中的短段落（最多 1200）；⌃⌥D 发送选中词句（最多 1200）及实际取得的附近语境（合计最多 2000）。系统桥接在本地可能读取控件文本再定位句子。不发送整篇、路径、应用身份或历史；不主动联网分析。")
-                        .font(.caption).foregroundStyle(.secondary)
-                    TextField("API Base URL", text: $preferences.provider.baseURL)
-                    TextField("模型 ID", text: $preferences.provider.model)
-                    SecureField("新 API Key（留空保留已有）", text: $key)
-                    Toggle("删除此地址的已存密钥", isOn: $removeKey)
-                    Text("JSON object · 关闭思考\n句子建议 640 tokens、选段建议 1400 tokens / 15 秒；语境解释 1400 tokens / 20 秒。\n按需请求，不自动重试；每次触发可能产生费用。当前使用 DeepSeek 参数。")
-                        .font(.caption).foregroundStyle(.secondary)
-                    Text("密钥存入 macOS 钥匙串，按服务地址隔离；设置文件不包含密钥。")
-                        .font(.caption).foregroundStyle(.secondary)
-                    Text("“测试连接”只发送合成句子 This works 轻载条件下.，可能产生少量 API 费用；不读取 TextEdit，也不保存网络开关。")
-                        .font(.caption)
-                    HStack {
-                        Button(testTask == nil ? "测试连接（合成文本）" : "测试中…") { testConnection() }
-                            .disabled(testTask != nil || removeKey)
-                        if testTask != nil { Button("取消测试") { cancelTest(); status = "测试已取消" } }
+                    Button("重新检查") { accessibilityTrusted = AXIsProcessTrusted() }
+                }
+            }
+            Section("允许的应用") {
+                appToggle("TextEdit", id: "com.apple.TextEdit")
+                Toggle("允许其他应用中的按需写作与阅读", isOn: $preferences.globalAccessEnabled)
+                Text("关闭时仅在上方勾选的应用中使用。开启后，其他应用的可访问编辑区和选区也可响应快捷键。")
+                    .font(.callout).foregroundStyle(.secondary)
+            }
+            Section("接受与隐私") {
+                Text("接受时临时借用剪贴板执行一次原生粘贴；在仍属本次操作时恢复。剪贴板历史工具可能记录临时内容。")
+                    .font(.callout)
+                Text("基础富文本可保留常见字体和样式；复杂格式与不同编辑器的撤销行为需要在原应用核对。")
+                    .font(.callout).foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    private var serviceSection: some View {
+        Group {
+            Section("连接") {
+                HStack {
+                    Text("DeepSeek · Chat Completions")
+                    Spacer()
+                    Button("恢复 DeepSeek 预设") {
+                        preferences.provider = DeepSeekExpressionProvider.preset
+                        preferences.networkEnabled = false
                     }
                 }
-                Section("写作与学习 · 后续阶段") {
-                    Text("当前按原意生成自然英文，修正必要的语法和搭配，保留作者语气、观点与技术信息。风格切换和学习收藏将在后续阶段开放。")
-                        .font(.caption).foregroundStyle(.secondary)
-                    Picker("语境", selection: $preferences.context) {
-                        ForEach(WritingContext.allCases, id: \.self) { Text($0.rawValue).tag($0) }
-                    }.disabled(true)
-                    Picker("修正强度", selection: $preferences.correctionLevel) {
-                        Text("最小纠错").tag(CorrectionLevel.correct)
-                        Text("更自然").tag(CorrectionLevel.natural)
-                    }.disabled(true)
-                    Toggle("本地表达记忆（主动保存，不保存全文）", isOn: $preferences.learningEnabled).disabled(true)
-                    Toggle("本地累计统计（阶段 3 开放）", isOn: $preferences.statisticsEnabled).disabled(true)
-                }
-                DiagnosticsSettingsSection(diagnostics: diagnostics)
+                Toggle("使用配置的模型服务", isOn: $preferences.networkEnabled)
+                TextField("API Base URL", text: $preferences.provider.baseURL)
+                TextField("模型 ID", text: $preferences.provider.model)
+                SecureField("新 API Key（留空保留已有）", text: $key)
+                Button("删除当前地址的已存密钥…", role: .destructive) { confirmRemoveKey = true }
+                    .disabled(removeKey)
+                if removeKey { Text("已标记删除，保存设置后生效").foregroundStyle(.orange) }
+                Text("密钥存于 macOS 钥匙串，按完整服务地址隔离；设置文件不含密钥。")
+                    .font(.callout).foregroundStyle(.secondary)
+            }
+            Section("请求范围与费用") {
+                Text("写作发送当前句（最多 600 个 UTF-16 单位）或明确选中的短段落（最多 1200）；阅读发送选区及实际取得的附近语境（合计最多 2000）。")
+                    .font(.callout)
+                Text("只在按下快捷键后请求，不自动重试。每次请求可能产生费用；服务失败不会退回固定样例。")
+                    .font(.callout).foregroundStyle(.secondary)
+                Text("“测试连接”只发送合成句子 This works 轻载条件下.；不读取其他应用，也不保存网络开关。")
+                    .font(.callout).foregroundStyle(.secondary)
                 HStack {
-                    Button("保存设置") { save() }.disabled(testTask != nil)
-                    Text(status).font(.caption).foregroundStyle(.secondary)
+                    Button(testTask == nil ? "测试连接（合成文本）" : "测试中…") { testConnection() }
+                        .disabled(testTask != nil || removeKey)
+                    if testTask != nil { Button("取消测试") { cancelTest(); status = "测试已取消" } }
                 }
-            }.formStyle(.grouped)
-        }.frame(width: 560, height: 650)
-            .onChange(of: preferences) { _, _ in cancelTest(); status = "设置有改动，尚未保存" }
-            .onChange(of: preferences.provider.baseURL) { _, _ in
-                cancelTest(); key = ""; removeKey = false
-                status = "地址已更改；请填写该地址的密钥，或留空使用其已有密钥"
             }
-            .onChange(of: key) { _, _ in cancelTest() }
-            .onChange(of: removeKey) { _, _ in cancelTest() }
-            .onDisappear { cancelTest(); key = "" }
-            .onReceive(NotificationCenter.default.publisher(for: NSWindow.willCloseNotification, object: window)) { _ in
-                cancelTest(); key = ""
-            }
+        }
+    }
+
+    private func updateDirty() {
+        guard let baseline else { return }
+        onDirtyChange(preferences != baseline || !key.isEmpty || removeKey)
     }
 
     private func appToggle(_ title: String, id: String) -> some View {
@@ -128,7 +247,9 @@ private struct SettingsView: View {
             else if !key.isEmpty { try ProviderCredentials.save(key, for: preferences.provider) }
             try preferences.persist()
             onSave(preferences)
-            key = ""; removeKey = false; status = "已保存"
+            key = ""; removeKey = false; baseline = preferences
+            onDirtyChange(false)
+            status = "已保存"
         } catch { status = providerMessage(error) }
     }
 

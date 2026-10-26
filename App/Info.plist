@@ -17,9 +17,9 @@
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>CFBundleShortVersionString</key>
-    <string>0.5.2</string>
+    <string>0.5.3</string>
     <key>CFBundleVersion</key>
-    <string>17</string>
+    <string>18</string>
     <key>LingoMendBuildChannel</key>
     <string>release</string>
     <key>LSMinimumSystemVersion</key>
@@ -28,5 +28,7 @@
     <true/>
     <key>NSHighResolutionCapable</key>
     <true/>
+    <key>NSAccessibilityUsageDescription</key>
+    <string>LingoMend 仅在你按下写作或阅读快捷键后读取当前选区与附近文字，用于生成建议；接受前会重新核对原文。</string>
 </dict>
 </plist>

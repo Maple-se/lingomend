@@ -15,22 +15,24 @@ final class SentenceCandidatePanel {
 
     func show(_ proposal: SentenceProposal, anchor: CGRect, onAccept: @escaping @MainActor () -> Void,
               onDismiss: @escaping @MainActor () -> Void) {
-        let width: CGFloat = 450, height: CGFloat = 240
-        let panel = self.panel ?? NonActivatingSentencePanel(contentRect: NSRect(x: 0, y: 0, width: width, height: height),
+        let visibleText = proposal.request.sentence.count +
+            (proposal.advice.status == .suggest ? proposal.suggestedSentence.count : proposal.advice.message.count)
+        let lines = CGFloat(max(2, (visibleText + 47) / 48))
+        let height = min(440, max(260, 190 + lines * 24))
+        let frame = PanelPlacement.frame(anchor: anchor, preferredSize: NSSize(width: 470, height: height))
+        let panel = self.panel ?? NonActivatingSentencePanel(contentRect: frame,
             styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
         panel.level = .floating; panel.isFloatingPanel = true; panel.hidesOnDeactivate = false
         panel.hasShadow = true; panel.isOpaque = false; panel.backgroundColor = .clear
         panel.collectionBehavior = [.moveToActiveSpace, .fullScreenAuxiliary]
-        panel.contentView = NSHostingView(rootView: SentenceCandidateView(proposal: proposal, onAccept: onAccept, onDismiss: onDismiss))
-        let top = NSScreen.screens.first?.frame.maxY ?? 0
-        let caret = NSRect(x: anchor.minX, y: top - anchor.maxY, width: anchor.width, height: anchor.height)
-        let area = (NSScreen.screens.first { $0.frame.intersects(caret) } ?? NSScreen.main)?.visibleFrame
-            ?? NSRect(x: 0, y: 0, width: 1000, height: 800)
-        let x = min(max(caret.minX, area.minX + 8), area.maxX - width - 8)
-        let y = caret.minY - height - 6 >= area.minY ? caret.minY - height - 6
-            : min(caret.maxY + 6, area.maxY - height - 8)
-        panel.setFrame(NSRect(x: x, y: y, width: width, height: height), display: true)
+        panel.contentView = NSHostingView(rootView: SentenceCandidateView(
+            proposal: proposal, onAccept: onAccept, onDismiss: onDismiss))
+        panel.setFrame(frame, display: true)
         panel.orderFrontRegardless()
+        NSAccessibility.post(element: panel, notification: .announcementRequested,
+                             userInfo: [.announcement: proposal.advice.status == .suggest
+                                ? "写作建议已显示。请核对原文和建议，按 Control Option Return 接受。"
+                                : "写作反馈已显示。"])
         self.panel = panel
     }
 }
@@ -39,40 +41,61 @@ private struct SentenceCandidateView: View {
     let proposal: SentenceProposal
     let onAccept: () -> Void
     let onDismiss: () -> Void
+
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack {
-                Text(proposal.label).font(.system(size: 13, weight: .semibold))
-                Spacer()
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(alignment: .firstTextBaseline) {
+                Label(proposal.label, systemImage: proposal.advice.status == .suggest ? "text.bubble" : "info.circle")
+                    .font(.headline)
+                Spacer(minLength: 8)
                 Text(proposal.scope.isPassage ? "所选短段落" : proposal.scope.target.kind == .explicitSelection ? "只改选区" : "当前句子")
                     .font(.caption).foregroundStyle(.secondary)
             }
             ScrollView {
-                VStack(alignment: .leading, spacing: 8) {
-                    Text("读取语境：\(proposal.scope.context.text)").font(.caption).foregroundStyle(.secondary)
+                VStack(alignment: .leading, spacing: 12) {
+                    section("原文", text: proposal.request.sentence)
                     if proposal.advice.status == .suggest {
-                        Text(proposal.suggestedSentence).font(.system(size: 14, weight: .medium))
-                        Text("修改对照").font(.caption).foregroundStyle(.secondary)
-                        diff.font(.system(size: 12))
+                        section("建议", text: proposal.suggestedSentence)
+                        if !proposal.changes.isEmpty {
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text("修改").font(.caption).foregroundStyle(.secondary)
+                                diff.font(.callout).accessibilityHidden(true)
+                                Text(diffSummary).font(.caption).foregroundStyle(.secondary)
+                                    .accessibilityLabel("修改摘要：\(diffSummary)")
+                            }
+                        }
                     } else {
                         Text(proposal.advice.message.isEmpty ? "这句已经合适，可以继续写。" : proposal.advice.message)
-                            .font(.system(size: 14))
+                            .font(.body).fixedSize(horizontal: false, vertical: true)
+                    }
+                    if proposal.scope.context.text != proposal.request.sentence {
+                        section("参考语境", text: proposal.scope.context.text)
                     }
                 }.frame(maxWidth: .infinity, alignment: .leading)
             }
-            HStack {
+            HStack(spacing: 8) {
                 Text(proposal.snapshot.applicationIdentifier == "com.apple.TextEdit"
-                    ? "明确接受才写回 · ⌘Z 撤销" : "原生粘贴 · 样式与撤销由编辑器处理")
-                    .font(.system(size: 10)).foregroundStyle(.secondary)
-                Spacer()
-                Button("取消", action: onDismiss).buttonStyle(.plain).font(.caption)
+                    ? "接受后可在编辑器按 ⌘Z 撤销" : "由原编辑器处理粘贴、样式与撤销")
+                    .font(.caption).foregroundStyle(.secondary)
+                Spacer(minLength: 4)
+                Button("收起", action: onDismiss).frame(minWidth: 60, minHeight: 44)
                 if proposal.advice.status == .suggest {
-                    Button("接受 ⌃⌥↩", action: onAccept).buttonStyle(.borderedProminent).font(.caption)
+                    Button("接受 ⌃⌥↩", action: onAccept)
+                        .buttonStyle(.borderedProminent).frame(minHeight: 44)
                 }
             }
-        }.padding(12).frame(width: 450, height: 240)
-            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12))
-            .overlay(RoundedRectangle(cornerRadius: 12).stroke(.primary.opacity(0.12)))
+        }
+        .padding(16)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .modifier(CandidateCardSurface())
+    }
+
+    private func section(_ title: String, text: String) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(title).font(.caption).foregroundStyle(.secondary)
+            Text(text).font(.body).textSelection(.enabled)
+                .fixedSize(horizontal: false, vertical: true)
+        }
     }
 
     private var diff: Text {
@@ -85,5 +108,18 @@ private struct SentenceCandidateView: View {
             }
             return result + text
         }
+    }
+
+    private var diffSummary: String {
+        let changes = proposal.changes.compactMap { segment -> String? in
+            let value = segment.text.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !value.isEmpty else { return nil }
+            switch segment.kind {
+            case .unchanged: return nil
+            case .removed: return "删除“\(value)”"
+            case .inserted: return "插入“\(value)”"
+            }
+        }
+        return changes.isEmpty ? "原文结构保持不变" : changes.joined(separator: "；")
     }
 }

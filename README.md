@@ -7,9 +7,14 @@ Write what you can. Learn what you can't.
 LingoMend is a lightweight macOS English expression companion for non-native
 speakers. Keep your existing input method, write what you can, and use Chinese
 for expression gaps. Ask for help with your current sentence; necessary English
-corrections preserve your meaning, opinions and voice. Learning opens on demand.
+corrections preserve your meaning, opinions and voice. Read selected expressions on demand.
 
-## Status: T3.1 Word experience build (0.5.2 / build 17)
+## Status: T3.1 UI and interaction update (0.5.3 / build 18)
+
+Build 18 removes the retired in-app input prototype. The menu bar icon opens settings,
+shows current shortcut and permission status, and keeps writing and reading in the original
+editor. Candidate and reading cards show complete scrollable text, clearer actions and
+accessibility announcements. Settings groups access, model service and diagnostics.
 
 The first T3 slice adds **Control-Option-D** read-only contextual explanations for
 accessible selections across apps. Selected words/phrases receive their meaning
@@ -26,7 +31,7 @@ Keychain credential and network switch: selection ≤1200 UTF-16 units, total co
 See [global experience steps](docs/t3-global-experience.md). Real-app compatibility
 remains a user-experience check.
 
-Build 17 adds a Word page-editor capability check and an addressed, read-only selected-text
+Build 17 added a Word page-editor capability check and an addressed, read-only selected-text
 fallback. It also permits a guarded plain-text native paste for ordinary Word body text when
 Word's proprietary attributes cannot be represented as RTF. See the
 [Word acceptance steps](docs/t3-word-build17-experience.md); native acceptance and undo
@@ -109,8 +114,8 @@ swift test
 sh Scripts/build-local-app.sh
 ```
 
-Quit any old LingoMend process from its LM menu, then open `.build/LingoMend.app`.
-In **LM → 设置**, allow TextEdit; manually grant macOS Accessibility permission
+Quit any old LingoMend process from its menu bar icon, then open `.build/LingoMend.app`.
+In **菜单栏图标 → 设置… → 访问与应用**, allow TextEdit and grant macOS Accessibility permission
 to this app. Create a synthetic TextEdit document.
 
 Type `This works 轻载条件下.` or `I very like 这个方案.`, then press
@@ -119,7 +124,7 @@ dismisses it, as does Escape. **Control-Option-Return** accepts a suggested edit
 release modifier keys after pressing it. Use TextEdit's **Command-Z** to undo.
 Ordinary typing and IME composition keys remain untouched.
 
-To use real suggestions, open **LM → 设置**, keep the DeepSeek preset,
+To use real suggestions, open **菜单栏图标 → 设置… → 模型服务**, keep the DeepSeek preset,
 enter your key privately, and click **测试连接（合成文本）**. Then enable
 **使用配置的模型服务** and save. The explicit test can make one paid request
 even while normal networking is disabled. It does not read other apps.
