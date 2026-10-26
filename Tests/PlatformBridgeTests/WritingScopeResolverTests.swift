@@ -75,4 +75,22 @@ final class WritingScopeResolverTests: XCTestCase {
             valueSettable: false, selectedTextSettable: true, rangeSettable: true)
         XCTAssertTrue(customEditor.canAccept(selection: NSRange(location: 3, length: 0)))
     }
+    func testWordDisabledAXPageRequiresSettableValueAndSelection() {
+        let word = EditorCapabilities(applicationIdentifier: "com.microsoft.Word", role: "AXTextArea",
+            enabled: false, explicitlyEditable: false, valueSettable: true,
+            selectedTextSettable: false, rangeSettable: true)
+        XCTAssertTrue(word.wordCompatibility)
+        XCTAssertTrue(word.canAccept(selection: NSRange(location: 3, length: 0)))
+        for (app, role, valueSettable, rangeSettable) in [
+            ("com.microsoft.Word", "AXStaticText", true, true),
+            ("com.microsoft.Word", "AXTextArea", false, true),
+            ("com.microsoft.Word", "AXTextArea", true, false),
+            ("other.app", "AXTextArea", true, true)
+        ] {
+            let capabilities = EditorCapabilities(applicationIdentifier: app, role: role,
+                enabled: false, explicitlyEditable: false, valueSettable: valueSettable,
+                selectedTextSettable: false, rangeSettable: rangeSettable)
+            XCTAssertFalse(capabilities.canAccept(selection: NSRange(location: 0, length: 5)))
+        }
+    }
 }

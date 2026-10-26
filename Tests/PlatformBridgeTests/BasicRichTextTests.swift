@@ -1,6 +1,6 @@
 import AppKit
 @preconcurrency import ApplicationServices
-import PlatformBridge
+@testable import PlatformBridge
 import XCTest
 
 final class BasicRichTextTests: XCTestCase {
@@ -88,5 +88,17 @@ final class BasicRichTextTests: XCTestCase {
               .font: NSFont.systemFont(ofSize: 12), key: "unsupported",
             ])))
     }
+  }
+  @MainActor func testWordPlainFallbackExcludesStructuralEdits() {
+    let body = NSMutableAttributedString(string: "I very like this plan.", attributes: [
+      .font: NSFont.systemFont(ofSize: 12), NSAttributedString.Key("WordPrivateStyle"): true,
+    ])
+    let edit = (body.string as NSString).range(of: "very")
+    XCTAssertTrue(WordPlainTextFallback.permits(body, affected: edit))
+    body.addAttribute(.link, value: URL(string: "https://example.com")!, range: edit)
+    XCTAssertFalse(WordPlainTextFallback.permits(body, affected: edit))
+    body.removeAttribute(.link, range: edit)
+    body.replaceCharacters(in: edit, with: "\u{FFFC}")
+    XCTAssertFalse(WordPlainTextFallback.permits(body, affected: NSRange(location: edit.location, length: 1)))
   }
 }

@@ -306,6 +306,7 @@ public final class MacOSAccessibilityTextReader: FocusedTextReading, SafeTextRep
                                   expectedPID: pid_t? = nil) throws -> TextSnapshot {
         AXUIElementSetMessagingTimeout(focused, 0.5)
         probe?.textLength = nil; probe?.selection = nil; probe?.editable = nil
+        probe?.valueSettable = nil; probe?.rangeSettable = nil; probe?.wordCompatibility = nil
 
         var subrole: CFTypeRef?
         _ = AXUIElementCopyAttributeValue(focused, kAXSubroleAttribute as CFString, &subrole)
@@ -388,13 +389,19 @@ public final class MacOSAccessibilityTextReader: FocusedTextReading, SafeTextRep
             var value = DarwinBoolean(false)
             return AXUIElementIsAttributeSettable(focused, name as CFString, &value) == .success && value.boolValue
         }
-        capabilities = EditorCapabilities(role: attribute(kAXRoleAttribute) as? String ?? "",
+        let valueSettable = settable(kAXValueAttribute)
+        let rangeSettable = settable(kAXSelectedTextRangeAttribute) || settable(kAXSelectedTextRangesAttribute)
+            || settable("AXSelectedTextMarkerRange")
+        capabilities = EditorCapabilities(applicationIdentifier: appIdentifier,
+            role: attribute(kAXRoleAttribute) as? String ?? "",
             enabled: (attribute(kAXEnabledAttribute) as? Bool) != false,
             explicitlyEditable: attribute("AXEditable") as? Bool,
-            valueSettable: settable(kAXValueAttribute), selectedTextSettable: settable(kAXSelectedTextAttribute),
-            rangeSettable: settable(kAXSelectedTextRangeAttribute) || settable(kAXSelectedTextRangesAttribute)
-                || settable("AXSelectedTextMarkerRange"))
+            valueSettable: valueSettable, selectedTextSettable: settable(kAXSelectedTextAttribute),
+            rangeSettable: rangeSettable)
         probe?.editable = capabilities?.editable
+        probe?.valueSettable = valueSettable
+        probe?.rangeSettable = rangeSettable
+        probe?.wordCompatibility = capabilities?.wordCompatibility
         probe?.stop = .matched
 
         // AX has no universal edit revision. This is a content fingerprint;

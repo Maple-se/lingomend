@@ -41,10 +41,15 @@ public struct CaptureDiagnostic: Codable, Sendable {
     public let selectionLocation: Int?
     public let selectionLength: Int?
     public let editable: Bool?
+    public let valueSettable: Bool?
+    public let rangeSettable: Bool?
+    public let wordCompatibility: Bool?
     public let results: [Result]
     public init(focus: Focus, role: Role, stop: Stop, nodes: Int, depth: Int, candidates: Int,
                 textLength: Int? = nil, selectionLocation: Int? = nil, selectionLength: Int? = nil,
-                editable: Bool? = nil, results: [Result] = [], focusRole: Role = .other, emptyValues: Int = 0) {
+                editable: Bool? = nil, valueSettable: Bool? = nil, rangeSettable: Bool? = nil,
+                wordCompatibility: Bool? = nil, results: [Result] = [],
+                focusRole: Role = .other, emptyValues: Int = 0) {
         self.focus = focus; self.role = role; self.stop = stop
         self.nodes = max(0, min(nodes, 512)); self.depth = max(0, min(depth, 32))
         self.candidates = max(0, min(candidates, 512))
@@ -52,6 +57,9 @@ public struct CaptureDiagnostic: Codable, Sendable {
         self.selectionLocation = selectionLocation.map { max(0, min($0, 65_536)) }
         self.selectionLength = selectionLength.map { max(0, min($0, 65_536)) }
         self.editable = editable
+        self.valueSettable = valueSettable
+        self.rangeSettable = rangeSettable
+        self.wordCompatibility = wordCompatibility
         self.focusRole = focusRole; self.emptyValues = max(0, min(emptyValues, 512))
         self.results = Array(results.prefix(24))
     }

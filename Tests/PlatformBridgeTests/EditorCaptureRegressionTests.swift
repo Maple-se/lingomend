@@ -46,4 +46,16 @@ final class EditorCaptureRegressionTests: XCTestCase {
         XCTAssertEqual(snapshot(location: 3).changeReason(comparedTo: original), .selectionChanged)
         XCTAssertEqual(snapshot(field: "another-input").changeReason(comparedTo: original), .focusChanged)
     }
+    func testWordSelectionUsesItsOwnValueAndActualRange() throws {
+        let text = "The current flows. Our current plan works."
+        let selected = (text as NSString).range(of: "current", options: .backwards)
+        let raw = try XCTUnwrap(AXSelectionValueFallback.text(text, range: selected))
+        XCTAssertEqual(raw, "current")
+        let scope = try ReadingScopeResolver().resolve(text: text, selection: selected)
+        XCTAssertEqual(scope.context, "Our current plan works.")
+        XCTAssertNil(AXSelectionValueFallback.text(text, range: NSRange(location: 100, length: 7)))
+        XCTAssertNil(AXSelectionValueFallback.text("🙂 word", range: NSRange(location: 1, length: 1)))
+        XCTAssertNil(AXSelectionValueFallback.text(String(repeating: "a", count: 65_537),
+                                                 range: NSRange(location: 0, length: 1)))
+    }
 }

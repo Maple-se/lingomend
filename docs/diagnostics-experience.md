@@ -2,13 +2,15 @@
 
 ## 版本与默认值
 
-本轮基线为 0.5.2（build 16）。先从旧 LM 菜单退出，再打开新构建的 app。
+当前体验包为 0.5.2（build 17）。先从旧 LM 菜单退出，再打开新构建的 app。
 
 build 16 在明确写作/阅读快捷键时各记录一条 `captureChecked`，与同次操作共用关联编号。
 嵌套 `capture` 只含固定类别、有限长度/计数和 AX 接口结果码；不保存正文、标题、控件描述或完整界面树。
 `focus`/`focusRole` 标识焦点来源和类别，`role` 是最后尝试/成功的文本节点类别，
 `textLength`、`selectionLocation`、`selectionLength` 是有限数值，缺失表示未取得，不等于 0。
-阅读的 `textLength` 指所取得选中文字的长度；写作指取得文本快照的长度。
+阅读成功时的 `textLength` 指所取得选中文字的长度；Word 阅读失败时可能是正文字符数。
+写作时它指取得文本快照的长度。build 17 的 `valueSettable`、`rangeSettable` 和
+`wordCompatibility` 只记录 Word 写作可用性判断所需的布尔值。
 `emptyValues` 记录写作读取中遇到的空/空白直接值次数，`nodes`/`depth` 为结构查找统计。
 `stop` 区分 matched、exhausted、nodeLimit、depthLimit、timeLimit、refused。
 `results` 中 code=0 表示调用成功，但不证明返回了正文或非空选区；同类 API 保留最后一次调用结果。

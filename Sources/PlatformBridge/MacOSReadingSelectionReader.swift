@@ -10,6 +10,27 @@ public struct ReadingCapture: Equatable, Sendable {
     public let anchor: CGRect?
 }
 
+/// An AX range is an address, so a selected substring can be recovered from
+/// the same element's complete value without searching for repeated words.
+enum AXSelectionValueFallback {
+    static func text(_ value: String?, range: NSRange?) -> String? {
+        guard let value, let range, range.length > 0,
+              value.utf16.count <= 65_536,
+              range.location != NSNotFound, range.location >= 0,
+              range.location <= value.utf16.count,
+              range.length <= value.utf16.count - range.location,
+              Range(range, in: value) != nil else { return nil }
+        let units = Array(value.utf16)
+        func splitsSurrogate(_ offset: Int) -> Bool {
+            guard offset > 0, offset < units.count else { return false }
+            return (0xD800...0xDBFF).contains(units[offset - 1])
+                && (0xDC00...0xDFFF).contains(units[offset])
+        }
+        guard !splitsSurrogate(range.location), !splitsSurrogate(NSMaxRange(range)) else { return nil }
+        return (value as NSString).substring(with: range)
+    }
+}
+
 /// Explicit read-only capture. No synthetic Copy, clipboard access, OCR, or AX writes.
 /// Standard ranges serve native editors/PDF views; opaque markers serve WebKit views.
 @MainActor
@@ -171,6 +192,10 @@ public final class MacOSReadingSelectionReader {
             range = nil; multipleRanges = attribute(node, kAXSelectedTextRangesAttribute)
         }
         let marker = multipleRanges == nil ? attribute(node, "AXSelectedTextMarkerRange") : nil
+        if identifier == "com.microsoft.Word", role == "AXTextArea" {
+            probe?.selection = range
+            probe?.textLength = (attribute(node, kAXNumberOfCharactersAttribute) as? NSNumber)?.intValue
+        }
         let markerText = marker.flatMap { parameter(node, "AXStringForTextMarkerRange", $0) as? String }
         func nonempty(_ text: String?) -> String? {
             text.flatMap { $0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : $0 }
@@ -180,6 +205,13 @@ public final class MacOSReadingSelectionReader {
                 guard range.length > 0, let argument = rangeArgument(range) else { return nil }
                 if let text = nonempty(parameter(node, kAXStringForRangeParameterizedAttribute, argument) as? String) { return text }
                 return nonempty((parameter(node, kAXAttributedStringForRangeParameterizedAttribute, argument) as? NSAttributedString)?.string)
+            }
+            ?? range.flatMap { range -> String? in
+                guard range.length > 0 else { return nil }
+                if let count = (attribute(node, kAXNumberOfCharactersAttribute) as? NSNumber)?.intValue,
+                   count > 65_536 { return nil }
+                return nonempty(AXSelectionValueFallback.text(attribute(node, kAXValueAttribute) as? String,
+                                                              range: range))
             }
         guard let raw, !raw.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
         probe?.candidates += 1

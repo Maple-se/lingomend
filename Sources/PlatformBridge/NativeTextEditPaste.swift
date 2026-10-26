@@ -22,6 +22,28 @@ public struct NativePastePayload: Sendable {
   }
 }
 
+/// Word may attach proprietary attributes to ordinary body text. A plain native
+/// paste is acceptable for an addressed text span, but never for a structural
+/// object, link or list item whose semantics would be lost with that fallback.
+enum WordPlainTextFallback {
+  static func permits(_ source: NSAttributedString, affected: NSRange) -> Bool {
+    guard source.length > 0, affected.location >= 0, affected.length >= 0,
+      affected.location <= source.length,
+      affected.length <= source.length - affected.location,
+      !source.string.contains("\u{FFFC}") else { return false }
+    let inspected = affected.length > 0 ? affected
+      : NSRange(location: min(affected.location, max(0, source.length - 1)), length: min(1, source.length))
+    var permitted = true
+    source.enumerateAttributes(in: inspected) { attrs, _, stop in
+      if attrs[.attachment] != nil || attrs[.link] != nil ||
+         (attrs[.paragraphStyle] as? NSParagraphStyle).map({ !$0.textBlocks.isEmpty || !$0.textLists.isEmpty }) == true {
+        permitted = false; stop.pointee = true
+      }
+    }
+    return permitted
+  }
+}
+
 public extension NativePasteDriving {
   func preparePaste(_ plan: SentenceEditPlan) throws -> NativePastePayload {
     let source = try attributedTarget(plan.scope.target.range)
@@ -259,9 +281,12 @@ public final class MacOSNativePasteDriver: NativePasteDriving {
     // expose an editable value while withholding AX attributed runs, so a verified
     // plain-text fallback keeps normal documents usable and reports the format limit.
     let isTextEdit = plan.original.applicationIdentifier == "com.apple.TextEdit"
+    let isWord = plan.original.applicationIdentifier == "com.microsoft.Word"
+    var inspectedSource: NSAttributedString?
     do {
       let source = try attributedTarget(plan.scope.target.range)
       guard source.string == plan.scope.target.text else { throw NativePasteError.stale(.sourceChanged) }
+      inspectedSource = source
       let rich = try BasicRichText.replacement(source: source, text: plan.replacement)
         .attributedSubstring(from: plan.replacementRange)
       return try NativePastePayload(rtf: rich.data(from: NSRange(location: 0, length: rich.length),
@@ -269,6 +294,13 @@ public final class MacOSNativePasteDriver: NativePasteDriving {
     } catch NativePasteError.formatUnavailable where isTextEdit {
       return NativePastePayload()
     } catch NativePasteError.unsupportedFormat where isTextEdit {
+      return NativePastePayload()
+    } catch NativePasteError.unsupportedFormat where isWord {
+      guard let inspectedSource,
+        WordPlainTextFallback.permits(inspectedSource,
+          affected: NSRange(location: plan.range.location - plan.scope.target.range.location,
+                            length: plan.range.length))
+      else { throw NativePasteError.unsupportedFormat }
       return NativePastePayload()
     } catch NativePasteError.formatUnavailable {
       return NativePastePayload()
@@ -339,12 +371,7 @@ public final class MacOSNativePasteDriver: NativePasteDriving {
   }
 
   private func selectionMatches(_ element: AXUIElement, range: CFRange) -> Bool {
-    var selected: CFTypeRef?
-    guard AXUIElementCopyAttributeValue(element, kAXSelectedTextRangeAttribute as CFString, &selected) == .success,
-          let selected, CFGetTypeID(selected) == AXValueGetTypeID() else { return false }
-    var actual = CFRange(location: -1, length: -1)
-    let ax = selected as! AXValue
-    guard AXValueGetType(ax) == .cfRange, AXValueGetValue(ax, .cfRange, &actual) else { return false }
+    guard let actual = try? AXSelectionRange.read(element) else { return false }
     return actual.location == range.location && actual.length == range.length
   }
   public func postPaste() throws {

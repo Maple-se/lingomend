@@ -12,6 +12,7 @@ final class AXCaptureProbe {
     var stop: CaptureDiagnostic.Stop = .refused
     var nodes = 0, depth = 0, candidates = 0
     var textLength: Int?, selection: NSRange?, editable: Bool?
+    var valueSettable: Bool?, rangeSettable: Bool?, wordCompatibility: Bool?
     private var results: [CaptureDiagnostic.Result] = []
     func record(_ api: CaptureDiagnostic.API, _ code: AXError) {
         let result = CaptureDiagnostic.Result(api: api, code: Int(code.rawValue))
@@ -21,7 +22,9 @@ final class AXCaptureProbe {
     func summary() -> CaptureDiagnostic {
         CaptureDiagnostic(focus: focus, role: role, stop: stop, nodes: nodes, depth: depth,
             candidates: candidates, textLength: textLength, selectionLocation: selection?.location,
-            selectionLength: selection?.length, editable: editable, results: results,
+            selectionLength: selection?.length, editable: editable,
+            valueSettable: valueSettable, rangeSettable: rangeSettable,
+            wordCompatibility: wordCompatibility, results: results,
             focusRole: focusRole, emptyValues: emptyValues)
     }
 }

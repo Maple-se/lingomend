@@ -9,7 +9,7 @@ speakers. Keep your existing input method, write what you can, and use Chinese
 for expression gaps. Ask for help with your current sentence; necessary English
 corrections preserve your meaning, opinions and voice. Learning opens on demand.
 
-## Status: T3.1 experience build (0.5.2 / build 16)
+## Status: T3.1 Word experience build (0.5.2 / build 17)
 
 The first T3 slice adds **Control-Option-D** read-only contextual explanations for
 accessible selections across apps. Selected words/phrases receive their meaning
@@ -25,6 +25,13 @@ Keychain credential and network switch: selection ≤1200 UTF-16 units, total co
 ≤2000; 1400 output tokens / 20 seconds. No clipboard-based capture or read-only edits.
 See [global experience steps](docs/t3-global-experience.md). Real-app compatibility
 remains a user-experience check.
+
+Build 17 adds a Word page-editor capability check and an addressed, read-only selected-text
+fallback. It also permits a guarded plain-text native paste for ordinary Word body text when
+Word's proprietary attributes cannot be represented as RTF. See the
+[Word acceptance steps](docs/t3-word-build17-experience.md); native acceptance and undo
+have been checked in one synthetic Word body document for selected and caret-scoped writing.
+Protected documents, tracked changes and complex layout areas remain unverified.
 
 **Control-Option-L** writing now uses actual editable-control capabilities across
 opted-in apps. Caret requests remain current-sentence scoped; explicit selections
