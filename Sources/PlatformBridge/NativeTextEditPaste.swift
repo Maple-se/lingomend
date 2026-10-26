@@ -304,10 +304,19 @@ public final class MacOSNativePasteDriver: NativePasteDriving {
       guard AXUIElementIsAttributeSettable(element, name as CFString, &settable) == .success,
             settable.boolValue else { continue }
       let argument: CFTypeRef = name == kAXSelectedTextRangeAttribute ? value : [value] as CFArray
+      // Some WebKit/Electron controls report the singular attribute as settable
+      // but reject that write. Keep trying the plural representation instead of
+      // turning a recoverable capability mismatch into a failed acceptance.
       guard AXUIElementSetAttributeValue(element, name as CFString, argument) == .success else {
-        throw NativePasteError.selectionFailed
+        continue
       }
-      return
+      if selectionMatches(element, range: range) { return }
+      // A successful AX write may be reflected after the control's next run-loop
+      // turn. Poll briefly; this remains bounded and happens only after acceptance.
+      for _ in 0..<3 {
+        usleep(10_000)
+        if selectionMatches(element, range: range) { return }
+      }
     }
     // Addressed WebKit/Word marker selection. The transaction immediately
     // recaptures and verifies the resulting numerical range before posting paste.
@@ -318,11 +327,25 @@ public final class MacOSNativePasteDriver: NativePasteDriving {
        let end = AXEditorAccess.parameter(element, "AXTextMarkerForIndex", NSNumber(value: range.location + range.length)),
        CFGetTypeID(start) == AXTextMarkerGetTypeID(), CFGetTypeID(end) == AXTextMarkerGetTypeID() {
       let markers = AXTextMarkerRangeCreate(nil, start as! AXTextMarker, end as! AXTextMarker)
-      guard AXUIElementSetAttributeValue(element, "AXSelectedTextMarkerRange" as CFString, markers) == .success
-        else { throw NativePasteError.selectionFailed }
-      return
+      if AXUIElementSetAttributeValue(element, "AXSelectedTextMarkerRange" as CFString, markers) == .success {
+        if selectionMatches(element, range: range) { return }
+        for _ in 0..<3 {
+          usleep(10_000)
+          if selectionMatches(element, range: range) { return }
+        }
+      }
     }
     throw NativePasteError.selectionFailed
+  }
+
+  private func selectionMatches(_ element: AXUIElement, range: CFRange) -> Bool {
+    var selected: CFTypeRef?
+    guard AXUIElementCopyAttributeValue(element, kAXSelectedTextRangeAttribute as CFString, &selected) == .success,
+          let selected, CFGetTypeID(selected) == AXValueGetTypeID() else { return false }
+    var actual = CFRange(location: -1, length: -1)
+    let ax = selected as! AXValue
+    guard AXValueGetType(ax) == .cfRange, AXValueGetValue(ax, .cfRange, &actual) else { return false }
+    return actual.location == range.location && actual.length == range.length
   }
   public func postPaste() throws {
     guard pid > 0, NSWorkspace.shared.frontmostApplication?.processIdentifier == pid,

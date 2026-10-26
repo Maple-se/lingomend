@@ -2,9 +2,9 @@
 
 ## 版本与默认值
 
-本轮基线为 0.5.2（build 15）。先从旧 LM 菜单退出，再打开新构建的 app。
+本轮基线为 0.5.2（build 16）。先从旧 LM 菜单退出，再打开新构建的 app。
 
-build 15 在明确写作/阅读快捷键时各记录一条 `captureChecked`，与同次操作共用关联编号。
+build 16 在明确写作/阅读快捷键时各记录一条 `captureChecked`，与同次操作共用关联编号。
 嵌套 `capture` 只含固定类别、有限长度/计数和 AX 接口结果码；不保存正文、标题、控件描述或完整界面树。
 `focus`/`focusRole` 标识焦点来源和类别，`role` 是最后尝试/成功的文本节点类别，
 `textLength`、`selectionLocation`、`selectionLength` 是有限数值，缺失表示未取得，不等于 0。
