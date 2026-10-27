@@ -56,7 +56,7 @@ replacement and clipboard helpers. No TypeTide source was copied. The
 LingoMend MVP may start, while its own focus/source/clipboard/undo tests
 remain a release gate. Detailed observations remain local.
 
-## MVP first slice
+## Historical MVP first slice (superseded by ADR 0004/0007/0008)
 
 1. User-triggered capture with explicit selection and caret-based paragraph
    or genuinely short single-line scope.

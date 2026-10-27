@@ -1,45 +1,31 @@
-# Security Policy
+# Security and privacy boundaries
 
-LingoMend is pre-release software. Do not use current development builds with passwords, secrets, private messages, or confidential documents.
+LingoMend is a development app. Current support and unresolved limitations are tracked in [status](docs/status.md); current behavior is defined in [product requirements](docs/product-requirements.md).
+
+## Capture and networking
+
+- Writing and reading begin only after an explicit shortcut. Idle operation does not capture drafts, record keystrokes or schedule model requests. AX notifications are observed only during an active request/preview to invalidate stale results.
+- Access to other apps is opt-in. With global access disabled, only explicitly allowed apps can respond; current settings expose TextEdit permission and a global access switch. This is not a per-document or per-site boundary, and a per-app exclusion UI has not shipped.
+- Native secure-field subroles are refused. An inaccessible custom field is not made readable through hidden Copy, OCR or clipboard monitoring.
+- The AX bridge may read the whole focused control locally before resolving a sentence. Writing sends only its bounded target/left/right, intent and extent; no window title, document path, app identity or learning history. Current sentence: at most 600 UTF-16 units; explicit passage: 1200. Reading sends selected text and actual bounded context: selection at most 1200, total at most 2000.
+- Networking defaults off. The model-service switch authorizes explicit requests in permitted apps. A connection test separately sends one synthetic sample even while that switch is off. Client cancellation does not guarantee server cancellation or zero charges.
+- Credentials use Keychain, isolated by normalized complete endpoint. Redirects are refused; cookies and disk response caching are disabled. HTTP is allowed only for loopback development services. A provider controls retention after transmission.
+- Response checks constrain structure, size and some meaning anchors; they do not establish semantic equivalence. Draft text and model output never become executable instructions or edit coordinates.
+
+## Editing and clipboard
+
+- Only explicit acceptance permits editing. Recheck the same source app, control, text, revision and selection; send one process-targeted native Cmd-V. Never generate Return/send, activate another editor or overwrite a whole field as a fallback.
+- Borrow the clipboard only during acceptance. Materialize old data in memory; refuse data that cannot be saved reliably. Restore only while ownership/version still belongs to this operation; preserve newer user copies. Clipboard contents are not sent to the provider or logs.
+- Use basic attributed runs when available. Ordinary native text may use a text-only fallback with an explicit format limitation. Known links, attachments, lists/tables or advanced structural styles must not be stripped by that fallback. Actual editor formatting and undo remain app-specific checks.
+- Verify the paste and caret. If dispatch occurred but the result is unclear, report uncertainty without automatic retry or undo. Event delivery, external edits and clipboard restoration cannot be made atomic across processes; forced termination, late events or concurrent changes remain limitations.
+- AX has no universal IME-composition API. Commit composition before requesting/accepting. Rebuilt ad-hoc signed apps can need manual Accessibility reauthorization.
+
+## Local data and diagnostics
+
+- Runtime diagnostics contain fixed events, app system name/bundle identifier and bounded structural metrics; never text, prompts, responses, keys, URLs, document titles or clipboard data. Logs remain local, capped and Git-ignored. Development defaults on; release/unknown channels default off.
+- Synthetic model review is explicitly opt-in; generated cases/results and private acceptance notes remain in the ignored local Diagnostics directory. Default tests use synthetic in-memory responses and do not call a paid service.
+- Learning-store modules exist, but voluntary cards and independent-use evidence are not connected to the current app. No full drafts are persistently cached by writing/reading services; bounded short-lived request caches stay in memory.
 
 ## Reporting
 
-Please avoid publishing sensitive vulnerability details in a public issue. Until a dedicated security contact is established, open a minimal issue requesting a private reporting channel.
-
-## Security boundaries
-
-- Text is processed only after an explicit user trigger by default.
-- Companion observation is off by default and requires an explicit application
-  allowlist. It uses Accessibility notifications, not global key recording.
-- Networking is off by default. Enabling the model service and saving settings
-  authorizes requests from the native experience editor and explicitly allowlisted
-  apps. With companion observation enabled, those requests can be automatic after
-  a quiet interval. The allowlist is not a per-document or per-site consent boundary.
-- The settings connection-test button separately authorizes one synthetic-text
-  request, even with normal networking disabled; it never captures another app.
-- DeepSeek receives the placeholder, left/right scope snippets (each capped at
-  200 UTF-16 units), writing context/level and, only for explicit explanation,
-  the fixed candidate phrase. Learning history and app identities are not sent.
-  Short sentences/fields can fit entirely within those context bounds.
-- Automated model tests use synthetic in-memory responses. No real paid API
-  test is implied by a successful build.
-- Native secure-field subroles are refused. An allowlisted browser is not a
-  per-site permission boundary: all its accessible non-password fields are in
-  scope. Sensitive browser sessions should not be allowlisted.
-- AX is not a universal IME-composition interface. Cross-app composition,
-  notification coverage and native undo remain compatibility work; acceptance
-  is experimental and disabled by default.
-- API credentials use Keychain and are isolated by the normalized complete
-  endpoint. Redirects are refused, cookies/cache are disabled, and HTTP is allowed
-  only for loopback development endpoints. Custom endpoints receive their own
-  explicitly supplied key and text; OpenAI-compatible does not imply trusted.
-- No promise of zero server retention is made. A provider's own terms, privacy
-  settings and infrastructure govern the data after transmission.
-- Response validation constrains format, size and local edit boundaries, not
-  semantic truth. Prompt injection is treated as untrusted input; model output
-  cannot choose edit ranges, invoke tools or execute commands.
-- Short-lived memory caching is bounded to eight expression requests; there is
-  no persistent draft cache. Credentials remain in memory while the enabled
-  service session exists and in Keychain until explicitly removed.
-- Full source text must not be written to logs or analytics.
-- A replacement must be abandoned if focus, target element, range, or source text changed.
+Do not publish private drafts, credentials or raw logs in issues. Report the app/area, build, operation and short visible error. For sensitive vulnerabilities, open a minimal issue requesting a private reporting channel until a dedicated contact exists.

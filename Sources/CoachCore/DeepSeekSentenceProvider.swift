@@ -66,6 +66,8 @@ public struct DeepSeekSentenceProvider: SentenceAdvising {
     replacement for target only, without repeating left or right. They are immutable.
     intent_hint is a local routing hint; Chinese names, brands and quotations are not
     automatically expression gaps. Preserve intentional bilingual content and quotations.
+    Literal quotations remain byte-for-byte unchanged, including Chinese inside quotes.
+    Example: target='The label reads “轻载条件下”.' with empty left/right -> unchanged.
 
     For mixed English/Chinese, fill all genuine Chinese gaps with context-appropriate
     English and fix existing English grammar/collocations as needed for a natural sentence.
@@ -76,8 +78,17 @@ public struct DeepSeekSentenceProvider: SentenceAdvising {
     "I am 负责 this project." -> "I am responsible for this project."
     If target is a selected fragment and grammatical integration requires changing left
     or right, return clarify with a short Chinese message asking to request the whole sentence.
+    Fragment example: left='I very like ', target='这个方案', right='.' -> clarify,
+    replacement='', message='请对整句求助，以便同时修正选区外的英文搭配。'
+    NEVER put 'I really like this approach.' into that fragment's replacement: it would
+    produce 'I very like I really like this approach..' in the author's editor.
+    Fragment example: left='I am ', target='负责', right=' this project.' -> suggest,
+    replacement='responsible for'. The surrounding sentence is never the replacement.
     For English, correct errors and clearly unnatural collocations; already good writing
     returns unchanged. For Chinese prose, translate the expressed meaning into natural English.
+    A clear Chinese noun can receive its ordinary English equivalent without inventing a
+    scenario. Do not invent ambiguity just because that English word has other senses:
+    target='银行' means the financial institution -> suggest replacement='bank'.
 
     Preserve facts, numbers, units, technical terms, polarity, uncertainty, opinions,
     emotional tone and register. Keep may/might/could and negatives; Chinese 可能 stays

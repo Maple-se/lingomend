@@ -52,7 +52,8 @@ let package = Package(
         ),
         .testTarget(
             name: "LingoMendAppTests",
-            dependencies: ["LingoMendApp", "CoachCore"]
+            dependencies: ["LingoMendApp", "CoachCore"],
+            resources: [.copy("Fixtures")]
         )
     ]
 )

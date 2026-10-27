@@ -1,5 +1,5 @@
 import AppKit
-import ApplicationServices
+@preconcurrency import ApplicationServices
 import Carbon
 import DiagnosticsCore
 
@@ -22,10 +22,10 @@ public struct NativePastePayload: Sendable {
   }
 }
 
-/// Word may attach proprietary attributes to ordinary body text. A plain native
-/// paste is acceptable for an addressed text span, but never for a structural
-/// object, link or list item whose semantics would be lost with that fallback.
-enum WordPlainTextFallback {
+/// Native editors can attach private attributes to ordinary body text. Refuse
+/// recognized structural content before falling back to a text-only native paste.
+@MainActor
+enum NativePlainTextFallback {
   static func permits(_ source: NSAttributedString, affected: NSRange) -> Bool {
     guard source.length > 0, affected.location >= 0, affected.length >= 0,
       affected.location <= source.length,
@@ -35,12 +35,52 @@ enum WordPlainTextFallback {
       : NSRange(location: min(affected.location, max(0, source.length - 1)), length: min(1, source.length))
     var permitted = true
     source.enumerateAttributes(in: inspected) { attrs, _, stop in
+      let superscripts: [NSAttributedString.Key] = [.superscript,
+        NSAttributedString.Key(kAXSuperscriptTextAttribute.takeUnretainedValue() as String)]
+      let advancedStyle = superscripts.contains { key in
+        guard let value = attrs[key] else { return false }
+        return (value as? NSNumber)?.doubleValue != 0
+      }
       if attrs[.attachment] != nil || attrs[.link] != nil ||
+         advancedStyle ||
          (attrs[.paragraphStyle] as? NSParagraphStyle).map({ !$0.textBlocks.isEmpty || !$0.textLists.isEmpty }) == true {
         permitted = false; stop.pointee = true
       }
     }
     return permitted
+  }
+}
+
+@MainActor
+enum NativePastePayloadBuilder {
+  static func prepare(_ plan: SentenceEditPlan,
+                      attributedTarget: (NSRange) throws -> NSAttributedString) throws -> NativePastePayload {
+    var inspectedSource: NSAttributedString?
+    do {
+      let source = try attributedTarget(plan.scope.target.range)
+      guard source.string == plan.scope.target.text else { throw NativePasteError.stale(.sourceChanged) }
+      inspectedSource = source
+      let rich = try BasicRichText.replacement(source: source, text: plan.replacement)
+        .attributedSubstring(from: plan.replacementRange)
+      return try NativePastePayload(rtf: rich.data(from: NSRange(location: 0, length: rich.length),
+        documentAttributes: [.documentType: NSAttributedString.DocumentType.rtf]))
+    } catch NativePasteError.unsupportedFormat {
+      guard ["com.apple.TextEdit", "com.microsoft.Word", "com.apple.Notes"].contains(plan.original.applicationIdentifier),
+        let inspectedSource,
+        NativePlainTextFallback.permits(inspectedSource,
+          affected: NSRange(location: plan.range.location - plan.scope.target.range.location,
+                            length: plan.range.length))
+      else { throw NativePasteError.unsupportedFormat }
+      return NativePastePayload()
+    } catch NativePasteError.formatUnavailable {
+      if let inspectedSource,
+         !NativePlainTextFallback.permits(inspectedSource,
+           affected: NSRange(location: plan.range.location - plan.scope.target.range.location,
+                             length: plan.range.length)) {
+        throw NativePasteError.unsupportedFormat
+      }
+      return NativePastePayload()
+    }
   }
 }
 
@@ -276,35 +316,7 @@ public final class MacOSNativePasteDriver: NativePasteDriving {
     return snapshot
   }
   public func preparePaste(_ plan: SentenceEditPlan) throws -> NativePastePayload {
-    // Native controls use attributed runs if available; controls exposing only text
-    // receive a text-only paste and inherit the editor's typing style. TextEdit can
-    // expose an editable value while withholding AX attributed runs, so a verified
-    // plain-text fallback keeps normal documents usable and reports the format limit.
-    let isTextEdit = plan.original.applicationIdentifier == "com.apple.TextEdit"
-    let isWord = plan.original.applicationIdentifier == "com.microsoft.Word"
-    var inspectedSource: NSAttributedString?
-    do {
-      let source = try attributedTarget(plan.scope.target.range)
-      guard source.string == plan.scope.target.text else { throw NativePasteError.stale(.sourceChanged) }
-      inspectedSource = source
-      let rich = try BasicRichText.replacement(source: source, text: plan.replacement)
-        .attributedSubstring(from: plan.replacementRange)
-      return try NativePastePayload(rtf: rich.data(from: NSRange(location: 0, length: rich.length),
-        documentAttributes: [.documentType: NSAttributedString.DocumentType.rtf]))
-    } catch NativePasteError.formatUnavailable where isTextEdit {
-      return NativePastePayload()
-    } catch NativePasteError.unsupportedFormat where isTextEdit {
-      return NativePastePayload()
-    } catch NativePasteError.unsupportedFormat where isWord {
-      guard let inspectedSource,
-        WordPlainTextFallback.permits(inspectedSource,
-          affected: NSRange(location: plan.range.location - plan.scope.target.range.location,
-                            length: plan.range.length))
-      else { throw NativePasteError.unsupportedFormat }
-      return NativePastePayload()
-    } catch NativePasteError.formatUnavailable {
-      return NativePastePayload()
-    }
+    try NativePastePayloadBuilder.prepare(plan, attributedTarget: attributedTarget)
   }
   public func attributedTarget(_ range: NSRange) throws -> NSAttributedString {
     guard let element else { throw NativePasteError.formatUnavailable }

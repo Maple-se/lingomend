@@ -1,6 +1,6 @@
 # ADR 0006: Bounded, local-only development diagnostics
 
-Status: implemented for T2.1; settings and actual TextEdit workflow await user experience.
+Status: adopted. Current delivery and actual app evidence are tracked in [status](../status.md).
 
 ## Decision
 

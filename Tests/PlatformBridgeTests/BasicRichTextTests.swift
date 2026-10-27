@@ -94,11 +94,44 @@ final class BasicRichTextTests: XCTestCase {
       .font: NSFont.systemFont(ofSize: 12), NSAttributedString.Key("WordPrivateStyle"): true,
     ])
     let edit = (body.string as NSString).range(of: "very")
-    XCTAssertTrue(WordPlainTextFallback.permits(body, affected: edit))
+    XCTAssertTrue(NativePlainTextFallback.permits(body, affected: edit))
     body.addAttribute(.link, value: URL(string: "https://example.com")!, range: edit)
-    XCTAssertFalse(WordPlainTextFallback.permits(body, affected: edit))
+    XCTAssertFalse(NativePlainTextFallback.permits(body, affected: edit))
     body.removeAttribute(.link, range: edit)
     body.replaceCharacters(in: edit, with: "\u{FFFC}")
-    XCTAssertFalse(WordPlainTextFallback.permits(body, affected: NSRange(location: edit.location, length: 1)))
+    XCTAssertFalse(NativePlainTextFallback.permits(body, affected: NSRange(location: edit.location, length: 1)))
+  }
+  @MainActor func testNotesPayloadFallsBackOnlyForNonStructuralText() throws {
+    let text = "I very like 这个方案."
+    let snapshot = TextSnapshot(applicationIdentifier: "com.apple.Notes", focusedElementIdentifier: "body",
+      text: text, selectedRange: NSRange(location: 5, length: 0), revisionToken: "original")
+    let plan = try SentenceEditPlan(original: snapshot, scope: WritingScopeResolver().resolve(snapshot),
+      replacement: "I really like this approach.")
+    let source = NSMutableAttributedString(string: text, attributes: [
+      .font: NSFont.systemFont(ofSize: 12), NSAttributedString.Key("SyntheticPrivateMetadata"): true])
+    XCTAssertFalse(try NativePastePayloadBuilder.prepare(plan) { _ in source }.preservesFormatting)
+    source.addAttribute(.link, value: "https://example.com", range: NSRange(location: 0, length: source.length))
+    XCTAssertThrowsError(try NativePastePayloadBuilder.prepare(plan) { _ in source }) {
+      XCTAssertEqual($0 as? NativePasteError, .unsupportedFormat)
+    }
+    source.removeAttribute(.font, range: NSRange(location: 0, length: source.length))
+    XCTAssertThrowsError(try NativePastePayloadBuilder.prepare(plan) { _ in source }) {
+      XCTAssertEqual($0 as? NativePasteError, .unsupportedFormat)
+    }
+    source.removeAttribute(.link, range: NSRange(location: 0, length: source.length))
+    source.addAttribute(.superscript, value: 1, range: NSRange(location: 0, length: source.length))
+    XCTAssertThrowsError(try NativePastePayloadBuilder.prepare(plan) { _ in source }) {
+      XCTAssertEqual($0 as? NativePasteError, .unsupportedFormat)
+    }
+    XCTAssertThrowsError(try NativePastePayloadBuilder.prepare(plan) { _ in NSAttributedString(string: "Changed.") }) {
+      XCTAssertEqual($0 as? NativePasteError, .stale(.sourceChanged))
+    }
+  }
+  @MainActor func testSelectedPassageRTFUsesTheSupportedPassageBudget() throws {
+    let text = String(repeating: "A sentence. ", count: 60)
+    let source = NSAttributedString(string: text, attributes: [.font: NSFont.systemFont(ofSize: 12)])
+    XCTAssertGreaterThan(source.length, 600)
+    XCTAssertEqual(try BasicRichText.replacement(source: source, text: text + "Another sentence.").string,
+      text + "Another sentence.")
   }
 }

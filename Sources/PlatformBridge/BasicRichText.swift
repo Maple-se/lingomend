@@ -108,7 +108,7 @@ public enum BasicRichText {
   public static func replacement(source: NSAttributedString, text: String) throws
     -> NSAttributedString
   {
-    guard source.length > 0, source.length <= 600, text.utf16.count <= 900 else {
+    guard source.length > 0, source.length <= 1_200, text.utf16.count <= 1_800 else {
       throw NativePasteError.unsupportedFormat
     }
     let original = try normalize(source)

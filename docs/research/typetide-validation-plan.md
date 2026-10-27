@@ -1,4 +1,6 @@
-# TypeTide validation plan
+# Historical TypeTide validation plan
+
+> Stage 0 is complete; ADR 0002 records the targeted-reference outcome. This page preserves the experimental checklist, not a current development freeze, required app installation list or T3 acceptance matrix. Current app evidence and deferrals are maintained only in [status](../status.md).
 
 ## Timing
 

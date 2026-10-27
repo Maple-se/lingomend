@@ -1,60 +1,7 @@
-# macOS MVP: companion-first slice
+# MVP 计划入口
 
-## Active slice: TextEdit sentence advice (2026-10-09)
+有效阶段计划已集中到 [development-stages.md](development-stages.md)。当前构建、应用兼容性与遗留项见 [status.md](status.md)，有效需求见 [product-requirements.md](product-requirements.md)。
 
-The current plan is [TextEdit T1–T4](development-stages.md), based on
-[scenario requirements](research/textedit-scenarios-and-requirements.md).
-Write first; ask for help with the current sentence; preserve the author's voice
-while making necessary English corrections. Learning is an on-demand branch.
+早期应用内输入原型及片段补词流程已经退出正式入口。旧的 Stage 1/2/3/4 编号和 TextEdit-only 计划不再指导当前开发。TypeTide 仅作隔离参考，技术决策保留于 ADR。
 
-- T1: explicit TextEdit-only help; sentence/selection context; bounded real-model
-  advice and statuses; original-context and difference preview; no external writes.
-- T2: safe acceptance, stale-source checks, caret/format preservation and native undo.
-- T3: short explanations, post-acceptance review and voluntary local expression cards.
-- T4: TextEdit feedback convergence, followed by wider compatibility and release work.
-
-Current delivery: T2 0.4.0; actual TextEdit acceptance is pending user feedback.
-Experience steps: [TextEdit T2](textedit-t2-experience.md).
-Native paste and scoped clipboard borrowing follow [ADR 0005](adr/0005-textedit-native-acceptance.md).
-The following describes the earlier prototype and retained foundations.
-
-## Historical prototype slice
-
-Product direction updated on 2026-10-03: keep the user's existing input method.
-A caret-adjacent, non-activating candidate is the main flow. The learning panel
-opens only on demand; shortcut-to-modal replacement is not the product.
-
-The current delivery boundaries are in [development stages](development-stages.md).
-Each stage ends with tests/build, conventional local commits and a normal remote
-push, a progress report, and user experience steps. Development stops there
-until feedback or authorization to continue.
-
-## Stage 1
-
-- Local native-editor experience with deterministic suggestions; no permission
-  needed and no network requests.
-- Explicitly enabled, allowlisted Accessibility notification observation.
-  No key logging, clipboard capture or continuous polling.
-- Resolve the current paragraph and nearest Chinese placeholder. Inline
-  acceptance cannot silently apply a broader sentence rewrite.
-- Debounce, throttle and discard stale generations on focus/content/selection
-  changes. Position candidates using caret bounds; unsupported positioning
-  fails quietly, not into a large modal.
-- Ordinary typing keys remain with the existing input method. Modified
-  acceptance/learning/dismissal keys are active only for a candidate.
-- Cross-app writes remain experimental, opt-in, and limited to TextEdit/Safari.
-  Checks address the captured element/range, without synthetic paste.
-  AX native undo and external IME composition are not yet verified.
-- Previously started model adapter and learning-data foundations are preserved
-  with synthetic tests; real-provider settings and aggregate statistics are
-  disabled in the Stage 1 application.
-
-Current user testing: [T3 global experience](t3-global-experience.md). The Stage 1 in-app input prototype has been retired.
-Detailed validation outcomes remain local and ignored.
-
-## Next
-
-Stage 2 enables real providers and resolves acceptance/composition/undo
-compatibility using Stage 1 feedback. Stage 3 builds the learning library and
-independent-use evidence UI. Stage 4 covers performance, wider compatibility,
-stable signing and release readiness. Ten-app testing does not block Stage 1.
+当前使用与回归操作统一从 [T3 体验步骤](t3-global-experience.md)进入。每阶段按项目规范交付、提交/授权推送并停下来汇报；日志与私人验证材料只留本地。

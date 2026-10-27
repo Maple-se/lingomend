@@ -64,7 +64,8 @@ public final class MacOSAccessibilityTextReader: FocusedTextReading, SafeTextRep
         }
         do { let result = try captureFocusedText(); succeeded = true; return result }
         catch let error as AccessibilityCaptureError {
-            guard error == .editableControlUnavailable || error == .textUnavailable || error == .selectionUnavailable else { throw error }
+            guard error == .editableControlUnavailable || error == .focusedElementUnavailable
+                || error == .textUnavailable || error == .selectionUnavailable else { throw error }
             let pid = app?.processIdentifier
             // One bounded settling attempt for a lazily enabled AX tree, only
             // during an explicit shortcut, never during final preflight.
@@ -168,9 +169,12 @@ public final class MacOSAccessibilityTextReader: FocusedTextReading, SafeTextRep
         let applicationFocus = axElement(application, kAXFocusedUIElementAttribute)
         let windowFocus = AXEditorAccess.element(AXEditorAccess.attribute(window, kAXFocusedUIElementAttribute,
             probe: probe, api: .windowFocus))
-        if let focused = applicationFocus ?? windowFocus {
+        var focusRoots: [AXUIElement] = []
+        for focused in [applicationFocus, windowFocus].compactMap({ $0 }) {
+            if focusRoots.contains(where: { CFEqual($0, focused) }) { continue }
+            focusRoots.append(focused)
             guard AXEditorAccess.belongs(focused, to: pid) else { throw AccessibilityCaptureError.focusChangedDuringCapture }
-            probe?.focus = applicationFocus != nil ? .application : .window
+            probe?.focus = applicationFocus.map { CFEqual($0, focused) } == true ? .application : .window
             probe?.focusRole = .init(systemRole: axAttribute(focused, kAXRoleAttribute) as? String)
             do {
                 return try captureFromFocused(focused, system: system,
@@ -189,15 +193,16 @@ public final class MacOSAccessibilityTextReader: FocusedTextReading, SafeTextRep
         // paste into a different field in the same window. Focus containers may
         // own an editor descendant; otherwise only AXFocused nodes are eligible.
         let deadline = ContinuousClock.now.advanced(by: .milliseconds(900))
-        var queue: [(AXUIElement, Int)] = [(applicationFocus ?? windowFocus ?? window, 0)]
-        if let first = queue.first, !CFEqual(first.0, window) { queue.append((window, 0)) }
+        var queue: [(AXUIElement, Int)] = focusRoots.map { ($0, 0) }
+        if !focusRoots.contains(where: { CFEqual($0, window) }) { queue.append((window, 0)) }
         var index = 0
         var visited: [AXUIElement] = []
         var depthLimited = false
         var descendants: [AXUIElement] = []
-        let focusRoot = applicationFocus ?? windowFocus
-        let rootRole = focusRoot.flatMap { axAttribute($0, kAXRoleAttribute) as? String }
-        let hasContainerFocus = focusRoot != nil && rootRole != "AXWindow" && rootRole != "AXApplication"
+        let containerRoots = focusRoots.filter {
+            let role = axAttribute($0, kAXRoleAttribute) as? String
+            return role != "AXWindow" && role != "AXApplication"
+        }
         probe?.stop = .exhausted
 
         while index < queue.count, index < 320, ContinuousClock.now < deadline {
@@ -221,7 +226,7 @@ public final class MacOSAccessibilityTextReader: FocusedTextReading, SafeTextRep
                         guard error == .textUnavailable || error == .selectionUnavailable else { throw error }
                         lastError = error
                     }
-                } else if hasContainerFocus, let focusRoot, isDescendant(current, of: focusRoot),
+                } else if containerRoots.contains(where: { isDescendant(current, of: $0) }),
                           isSettable(current, kAXValueAttribute) || isSettable(current, kAXSelectedTextAttribute) {
                     descendants.append(current)
                 }
@@ -241,6 +246,11 @@ public final class MacOSAccessibilityTextReader: FocusedTextReading, SafeTextRep
             probe?.focus = .focusedDescendant
             return try captureFromFocused(descendants[index], system: system,
                 validationWindow: window, expectedPID: pid)
+        }
+        // No focus is different from an editor whose text interface is missing.
+        // In particular a newly mounted web view can briefly expose neither.
+        if focusRoots.isEmpty, lastError == .focusedElementUnavailable {
+            throw AccessibilityCaptureError.focusedElementUnavailable
         }
         throw lastError == .focusedElementUnavailable ? .editableControlUnavailable : lastError
     }
