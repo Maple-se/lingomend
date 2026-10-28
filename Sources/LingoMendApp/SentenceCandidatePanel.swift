@@ -85,8 +85,12 @@ final class SentenceCandidatePanel {
         panel.collectionBehavior = [.moveToActiveSpace, .fullScreenAuxiliary]
         // A single hosting view and panel survive all phases of the request.
         if self.panel == nil {
-            panel.contentView = NSHostingView(rootView: WritingCardView(session: session,
+            let content = NSHostingView(rootView: WritingCardView(session: session,
                 onDismiss: { [weak self] in self?.dismiss() }))
+            // The panel owns its frame. Outgoing SwiftUI transition content
+            // must not feed its temporary minimum size back into NSWindow.
+            content.sizingOptions = []
+            panel.contentView = content
         }
         session.start(onDismiss: onDismiss)
         panel.setFrame(frame, display: true)
@@ -192,6 +196,7 @@ private struct WritingCardView: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .clipped()
         .modifier(CandidateCardSurface())
         .animation(reduceMotion ? nil : .easeInOut(duration: 0.18), value: session.phase)
     }
