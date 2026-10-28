@@ -1,5 +1,7 @@
 # LingoMend
 
+**English** | [简体中文](README.zh-CN.md)
+
 > **The goal is to need us less.**
 
 Write what you can. Learn what you can't.
