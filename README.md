@@ -19,7 +19,11 @@ The current version is specified in [App/Info.plist](App/Info.plist).
   errors; good writing can return unchanged, ambiguity can return clarification.
 - **Control-Option-D**: explain selected English words or sentences using actual captured
   context. Missing/partial context is labelled. Reading never edits the source.
-- Non-activating, scrollable candidate cards show original text, suggestion and differences.
+- A non-activating card near the captured caret or text shows request progress, then expands
+  in place to show the original text, suggestion and differences. It keeps the same attachment
+  edge and respects the system Reduce Motion setting. Successful acceptance stays nearby
+  briefly; errors use the menu-bar notice. Some editors expose only control bounds, so
+  positioning can be near the input area rather than the exact caret.
   **Control-Option-Return** or the Accept button applies a suggestion; **Escape** or
   **Control-Option-Period** dismisses it. Ordinary Return/Tab stay with the editor.
 - Source, focus and selection are rechecked before one native paste. Verify the result and

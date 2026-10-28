@@ -157,7 +157,7 @@ private final class LingoMendDelegate: NSObject, NSApplicationDelegate, NSMenuDe
     }
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         quitAfterAcceptance = true
-        if acceptance != nil { feedback("正在完成粘贴检查和剪贴板清理，随后退出", persistent: true) }
+        if acceptance != nil { statusLine?.title = "正在完成粘贴检查和剪贴板清理，随后退出" }
         else { finishTermination() }
         return .terminateLater
     }
@@ -187,6 +187,9 @@ private final class LingoMendDelegate: NSObject, NSApplicationDelegate, NSMenuDe
                           actionTitle: String? = nil, action: (@MainActor () -> Void)? = nil) {
         diagnostics.refresh()
         statusLine?.title = text
+        // Feedback popovers are for errors/exceptional actions. A candidate
+        // remains usable if only its keyboard shortcut registration failed.
+        if !hasPreview { panel.hide() }
         notice.show(text, near: statusItem?.button, persistent: persistent,
                     actionTitle: actionTitle, action: action)
     }
@@ -220,14 +223,15 @@ private final class LingoMendDelegate: NSObject, NSApplicationDelegate, NSMenuDe
             : "文本、选区或焦点已变化；可重新按快捷键求助"
     }
 
-    private func invalidate(reason: DiagnosticReason? = nil) {
+    private func invalidate(reason: DiagnosticReason? = nil, preservingWritingCard: Bool = false) {
         if let reason, generation != nil || hasPreview {
             record(DiagnosticEvent(.candidateDismissed, outcome: .cancelled,
                 reason: reason, stage: hasPreview ? .candidate : .model), operation: epoch)
         }
         epoch = UUID(); generation?.cancel(); generation = nil
         hasPreview = false; proposal = nil; activeExplanation = nil; activeSnapshot = nil
-        panel.hide(); notice.hide()
+        if !preservingWritingCard { panel.hide() }
+        notice.hide()
         activeReading = nil; readingReader.clear(); readingPanel.hide()
         unregisterInteractionKeys()
         observer.configure(enabled: false, allowedApplications: [])
@@ -278,7 +282,7 @@ private final class LingoMendDelegate: NSObject, NSApplicationDelegate, NSMenuDe
         // Initial callbacks occur before the task starts and never schedule model work.
         observer.configure(enabled: true, allowedApplications: [identifier])
         let token = epoch
-        feedback("正在识别当前表达…", persistent: true)
+        statusLine?.title = "正在定位当前表达…"
         registerCancellation()
         generation = Task { @MainActor [weak self] in
             guard let self else { return }
@@ -315,6 +319,16 @@ private final class LingoMendDelegate: NSObject, NSApplicationDelegate, NSMenuDe
                     scope: snapshot.selectedRange.length > 0 ? .selection : .currentSentence,
                     length: scope.target.text.utf16.count), operation: token)
                 let request = try SentenceProposal.request(for: scope)
+                guard let anchor = try await reader.caretBounds(for: snapshot), epoch == token else {
+                    record(DiagnosticEvent(.helpFailed, outcome: .refused,
+                        reason: .anchorUnavailable, stage: .candidate), operation: token)
+                    if epoch == token { feedback("无法定位光标；请重新把光标放回表达中") }
+                    return
+                }
+                panel.start(anchor: anchor, onDismiss: { [weak self] in
+                    guard let self, self.epoch == token else { return }
+                    self.invalidate(reason: .userCancelled)
+                })
                 statusLine?.title = "\(service.modeLabel) · \(request.intent.label)"
                 stage = .model
                 let advice = try await service.advice(request, operation: token)
@@ -322,19 +336,15 @@ private final class LingoMendDelegate: NSObject, NSApplicationDelegate, NSMenuDe
                 guard epoch == token else { return }
                 stage = .candidate
                 let current = try await reader.readFocusedText()
+                try Task.checkCancellation()
+                guard epoch == token else { return }
                 if let reason = current.changeReason(comparedTo: snapshot) { discardChangedPreview(reason: reason); return }
                 let proposal = try SentenceProposal(snapshot: snapshot, scope: scope, advice: advice)
-                guard let anchor = try await reader.caretBounds(for: snapshot), epoch == token else {
-                    record(DiagnosticEvent(.helpFailed, outcome: .refused,
-                        reason: .anchorUnavailable, stage: .candidate), operation: token)
-                    feedback("无法定位光标；请重新把光标放回表达中"); return
-                }
                 hasPreview = true
                 self.proposal = proposal; activeExplanation = nil; notice.hide()
                 record(DiagnosticEvent(.candidateShown,
                     outcome: diagnosticAdviceOutcome(advice), stage: .candidate), operation: token)
-                panel.show(proposal, anchor: anchor, onAccept: { [weak self] in self?.accept() },
-                    onDismiss: { [weak self] in self?.invalidate(reason: .userCancelled) },
+                panel.show(proposal, onAccept: { [weak self] in self?.accept() },
                     onExplain: { [weak self] in
                         guard let self else { throw CancellationError() }
                         return try await self.explain(proposal: proposal, operation: token)
@@ -444,7 +454,7 @@ private final class LingoMendDelegate: NSObject, NSApplicationDelegate, NSMenuDe
         }
         activeApplication = application
         observer.configure(enabled: true, allowedApplications: [identifier])
-        registerCancellation(); feedback("正在读取选中词句…", persistent: true)
+        registerCancellation(); statusLine?.title = "正在读取选中词句…"
         generation = Task { @MainActor [weak self] in
             guard let self else { return }
             var stage: DiagnosticStage = .capture
@@ -473,7 +483,7 @@ private final class LingoMendDelegate: NSObject, NSApplicationDelegate, NSMenuDe
                 record(DiagnosticEvent(.readingCaptured, stage: .scope,
                     scope: scope, shortcut: .read, length: request.context.utf16.count), operation: token)
                 stage = .model
-                feedback("\(service.modeLabel) · 正在解释选中内容…", persistent: true)
+                statusLine?.title = "\(service.modeLabel) · 正在解释选中内容…"
                 let explanation = try await readingService.explain(request, operation: token)
                 try Task.checkCancellation()
                 guard epoch == token else { return }
@@ -523,9 +533,11 @@ private final class LingoMendDelegate: NSObject, NSApplicationDelegate, NSMenuDe
             invalidate(); feedback("无法确认编辑范围；请重新求助"); return
         }
         let targetApplication = activeApplication
-        // Remove preview and its keys before starting; repeated clicks cannot reuse it.
-        invalidate()
-        feedback("正在接受建议…", persistent: true)
+        // Retire the preview and its keys without replacing the nearby card.
+        // The native transaction, including cleanup, remains non-cancellable.
+        guard panel.beginAcceptance() else { return }
+        invalidate(preservingWritingCard: true)
+        statusLine?.title = "正在接受建议…"
         acceptance = Task { @MainActor [weak self] in
             guard let self else { return }
             defer {
@@ -542,9 +554,15 @@ private final class LingoMendDelegate: NSObject, NSApplicationDelegate, NSMenuDe
                 if result.clipboard == .failed { feedback("文本已更新，但剪贴板恢复失败；请检查剪贴板") }
                 else if !result.caretPositioned { feedback("文本已更新；光标位置未确认，请检查后继续写作") }
                 else if !result.preservesFormatting {
-                    feedback("已接受 · 以普通文本写入，格式未保证；在原编辑器按 ⌘Z 可撤销")
+                    let message = "已接受 · 以普通文本写入，格式未保证；在原编辑器按 ⌘Z 可撤销"
+                    statusLine?.title = message
+                    panel.completeAcceptance(message: message)
                 }
-                else { feedback("已接受 · 在原编辑器按 ⌘Z 可撤销") }
+                else {
+                    let message = "已接受 · 在原编辑器按 ⌘Z 可撤销"
+                    statusLine?.title = message
+                    panel.completeAcceptance(message: message)
+                }
             } catch NativePasteError.resultUnconfirmed {
                 feedback("粘贴结果未确认；请检查原文，必要时在原编辑器按 ⌘Z。不会自动重试")
             } catch NativePasteError.clipboardRestorationFailed(let dispatched) {
