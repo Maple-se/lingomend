@@ -1,6 +1,6 @@
 # Security and privacy boundaries
 
-LingoMend is a development app. Current support and unresolved limitations are tracked in [status](docs/status.md); current behavior is defined in [product requirements](docs/product-requirements.md).
+LingoMend is a development app. See the [README](README.md) for setup and current user-facing functionality.
 
 ## Capture and networking
 

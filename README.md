@@ -9,13 +9,10 @@ write what you can, and use Chinese for expression gaps. Ask for help with the c
 sentence or a selection; necessary English corrections preserve your facts, opinions and
 voice. Read selected expressions in context on demand.
 
-## Current delivery
+## Features
 
-T4.1 experience build 20. The [status page](docs/status.md) is the source for the
-current version, app/area compatibility and unresolved work. The [development plan](docs/development-stages.md)
-defines stages; [product requirements](docs/product-requirements.md) tracks effective behavior and backlog.
-WeChat capture remains unresolved and deferred. Other apps have different evidence and
-limits; no claim is made that every text field works.
+This is a development app. Editor compatibility varies, and WeChat capture is not yet supported.
+The current version is specified in [App/Info.plist](App/Info.plist).
 
 - **Control-Option-L**: help with the complete current sentence, or explicitly selected
   words/sentences/short passages. Fill genuine Chinese gaps and fix necessary English
@@ -36,13 +33,10 @@ limits; no claim is made that every text field works.
 - Local, optional content-free diagnostics: development defaults on; release/unknown defaults
   off. At most five 1 MiB log files per channel with seven-day retention. No log upload.
 
-Writing explanations and post-acceptance review are available in T4.1: use the candidate's
+For an explanation, use the candidate's
 explicit **为什么这样改？** action, then open **最近一次建议…** from the menu after a
 successful acceptance. The explanation is optional and does not gate acceptance; the recent
-record is in-memory for the current session and does not save the full draft. Voluntary
-expression cards remain planned for T4.2. LearningCore foundations do not imply proven
-mastery detection.
-The retired in-app input prototype is no longer an entry point.
+record is in-memory for the current session and does not save the full draft.
 
 ## Try it locally
 
@@ -59,12 +53,10 @@ manually grant Accessibility permission. Rebuilt ad-hoc signed apps may need rea
 Configure the model under **Model Service**; a connection test sends one synthetic request
 and may incur a charge even with normal networking disabled. Never put a key in this repo.
 
-Use the [current T4.1 experience and regression steps](docs/t4-writing-explanation-experience.md)
-and the [T3 compatibility steps](docs/t3-global-experience.md).
-[Word body-text cases](docs/t3-word-build17-experience.md), [reading cases](docs/t3-reading-experience.md),
-[local diagnostics](docs/diagnostics-experience.md) and [synthetic quality review](docs/quality-review.md)
-provide focused checks. Default tests do not use paid services; explicit live quality review
-is separate from deterministic tests and requires semantic inspection of its output.
+To request help, place the caret in a sentence or select text and press **Control-Option-L**.
+Review the suggestion, then accept it with **Control-Option-Return** or dismiss it with
+**Escape**. To explain selected English text in context, press **Control-Option-D**.
+Use the original editor's undo command to reverse an accepted change.
 
 ## Product and privacy contract
 
@@ -86,10 +78,8 @@ CoachCore handles model contracts; MVPFlow handles proposals; PlatformBridge han
 scopes and native editing; DiagnosticsCore records bounded events; LearningCore retains
 future expression-store foundations. TypeTide is an isolated MIT reference, not the base.
 
-Read [AGENTS.md](AGENTS.md) and [CONTRIBUTING.md](CONTRIBUTING.md). Code, stage definitions,
-support claims and user instructions must be updated together. Each stage ends with checks,
-a build, a Conventional Commit and authorized normal push, then a report and user test steps.
-Private runtime logs, synthetic evaluation results and validation notes remain local and ignored.
+Read [AGENTS.md](AGENTS.md) and [CONTRIBUTING.md](CONTRIBUTING.md). Internal planning,
+runtime logs, evaluation results and validation records remain local and Git-ignored.
 
 ## License
 

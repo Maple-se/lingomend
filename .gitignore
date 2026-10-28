@@ -25,6 +25,9 @@ Diagnostics/
 # Runtime logs live outside this checkout; also exclude accidental local copies.
 LocalLogs/
 
+# Internal product planning, validation and review documents stay local.
+docs/
+
 # Private validation notes, including Markdown logs outside .stage0/
 *validation-log*.md
 
