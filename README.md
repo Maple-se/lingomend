@@ -61,6 +61,8 @@ and may incur a charge even with normal networking disabled. Never put a key in 
 
 Use the [current T4.1 experience and regression steps](docs/t4-writing-explanation-experience.md)
 and the [T3 compatibility steps](docs/t3-global-experience.md).
+The latest build 20 findings and immersive-experience backlog are recorded in
+[the feedback note](docs/research/build20-feedback-and-immersive-experience.md).
 [Word body-text cases](docs/t3-word-build17-experience.md), [reading cases](docs/t3-reading-experience.md),
 [local diagnostics](docs/diagnostics-experience.md) and [synthetic quality review](docs/quality-review.md)
 provide focused checks. Default tests do not use paid services; explicit live quality review

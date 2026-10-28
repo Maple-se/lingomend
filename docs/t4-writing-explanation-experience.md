@@ -29,3 +29,7 @@ SECOND_LINE_UNCHANGED
 ## 反馈格式
 
 请提供版本、应用和区域，以及“范围、解释、接受、第二行保持、一次撤销、最近回看、取消”各自是否通过。失败只需给界面提示和日志中的固定事件/operation；不要发送原文、完整日志或 API 凭据。微信采集仍按状态页延期，不纳入 T4.1 验收。
+
+## build 20 本轮反馈
+
+备忘录、Codex 和 Safari 测试区域已由用户确认通过；Word 在选中文字后通过，但无选区首次读取仍出现 `textUnavailable`；本轮没有收到 TextEdit 结果。详细证据和后续“光标附近卡片/句子切分”方向见 [build 20 反馈记录](research/build20-feedback-and-immersive-experience.md)。
