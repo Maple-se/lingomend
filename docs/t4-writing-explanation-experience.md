@@ -32,4 +32,4 @@ SECOND_LINE_UNCHANGED
 
 ## build 20 本轮反馈
 
-备忘录、Codex 和 Safari 测试区域已由用户确认通过；Word 在选中文字后通过，但无选区首次读取仍出现 `textUnavailable`；本轮没有收到 TextEdit 结果。详细证据和后续“光标附近卡片/句子切分”方向见 [build 20 反馈记录](research/build20-feedback-and-immersive-experience.md)。
+备忘录、Codex 和 Safari 测试区域已由用户确认通过；Word 在选中文字后通过，但无选区首次读取仍出现 `textUnavailable`；本轮没有收到 TextEdit 结果。后续“光标附近卡片”和句子切分优化已列入产品待办，具体审查记录只保留在开发者本地忽略目录。
