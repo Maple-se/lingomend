@@ -14,6 +14,22 @@ private actor CountingSentences: SentenceAdvising {
     }
 }
 
+private actor CountingWritingExplainer: WritingExplaining {
+    private(set) var calls = 0
+    let result: WritingExplanation?
+    let error: CoachingProviderError?
+
+    init(result: WritingExplanation? = nil, error: CoachingProviderError? = nil) {
+        self.result = result; self.error = error
+    }
+
+    func explain(_ request: WritingExplanationRequest) async throws -> WritingExplanation? {
+        calls += 1
+        if let error { throw error }
+        return result
+    }
+}
+
 final class SentenceServiceTests: XCTestCase {
     @MainActor func testServiceDoesNothingUntilAskedAndCachesResults() async throws {
         var preferences = AppPreferences(); preferences.networkEnabled = true
@@ -55,5 +71,40 @@ final class SentenceServiceTests: XCTestCase {
         catch { XCTAssertTrue(error is CancellationError) }
         let calls = await provider.calls
         XCTAssertEqual(calls, 1)
+    }
+
+    @MainActor func testWritingExplanationIsExplicitAndCachedSeparately() async throws {
+        var preferences = AppPreferences(); preferences.networkEnabled = false
+        let point = WritingExplanation(reason: "说明这次搭配。", category: .naturalness)
+        let explainer = CountingWritingExplainer(result: point)
+        let service = SentenceService(preferences: preferences,
+            provider: DemoSentenceProvider(), explanationProvider: explainer)
+        let request = try WritingExplanationRequest(
+            request: SentenceRequest(target: "I very like 这个方案."),
+            replacement: "I really like this approach.")
+        let first = try await service.explain(request)
+        let second = try await service.explain(request)
+        XCTAssertEqual(first, point); XCTAssertEqual(second, point)
+        let calls = await explainer.calls
+        XCTAssertEqual(calls, 1)
+    }
+
+    @MainActor func testExplanationFailureDoesNotChangeTheAdviceResult() async throws {
+        var preferences = AppPreferences(); preferences.networkEnabled = false
+        let explainer = CountingWritingExplainer(error: .invalidResponse)
+        let service = SentenceService(preferences: preferences,
+            provider: DemoSentenceProvider(), explanationProvider: explainer)
+        let request = try SentenceRequest(target: "I very like 这个方案.")
+        let advice = try await service.advice(request)
+        let explanationRequest = try WritingExplanationRequest(request: request,
+            replacement: advice.replacement)
+        do {
+            _ = try await service.explain(explanationRequest)
+            XCTFail("Expected explanation failure")
+        } catch {
+            XCTAssertEqual(error as? CoachingProviderError, .invalidResponse)
+        }
+        let afterFailure = try await service.advice(request)
+        XCTAssertEqual(afterFailure, advice)
     }
 }

@@ -12,8 +12,11 @@ case "$channel" in
   *) printf '%s\n' 'Usage: sh Scripts/build-local-app.sh [development|release]' >&2; exit 2 ;;
 esac
 
-swift build -c release --product LingoMendApp
-binary_dir=$(swift build -c release --show-bin-path)
+# The local app is an ad-hoc signed experience package. Disable SwiftPM's
+# subprocess sandbox and omit a dSYM so the script also works in the managed
+# development environment, where dsymutil cannot write its temporary output.
+swift build --disable-sandbox -c release -debug-info-format none --product LingoMendApp
+binary_dir=$(swift build --disable-sandbox -c release -debug-info-format none --show-bin-path)
 
 mkdir -p "$app_dir/Contents/MacOS"
 install -m 755 "$binary_dir/LingoMendApp" "$app_dir/Contents/MacOS/LingoMendApp"

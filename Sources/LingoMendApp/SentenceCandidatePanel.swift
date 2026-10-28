@@ -1,4 +1,5 @@
 import AppKit
+import Combine
 import CoachCore
 import MVPFlow
 import SwiftUI
@@ -9,12 +10,67 @@ private final class NonActivatingSentencePanel: NSPanel {
 }
 
 @MainActor
+final class WritingExplanationController: ObservableObject {
+    enum State: Equatable {
+        case idle
+        case loading
+        case loaded(WritingExplanation)
+        case unavailable
+        case failed
+    }
+
+    @Published private(set) var state: State = .idle
+    private let action: @MainActor () async throws -> WritingExplanation?
+    private var task: Task<Void, Never>?
+
+    init(action: @escaping @MainActor () async throws -> WritingExplanation?) {
+        self.action = action
+    }
+
+    var explanation: WritingExplanation? {
+        guard case .loaded(let explanation) = state else { return nil }
+        return explanation
+    }
+
+    func start() {
+        guard state != .loading else { return }
+        task?.cancel()
+        state = .loading
+        task = Task { @MainActor [weak self] in
+            guard let self else { return }
+            do {
+                let result = try await action()
+                if let result { state = .loaded(result) } else { state = .unavailable }
+            } catch is CancellationError {
+                if state == .loading { state = .idle }
+            } catch {
+                state = .failed
+            }
+            task = nil
+        }
+    }
+
+    func cancel() {
+        task?.cancel(); task = nil
+        if state == .loading { state = .idle }
+    }
+}
+
+@MainActor
 final class SentenceCandidatePanel {
     private var panel: NSPanel?
-    func hide() { panel?.orderOut(nil) }
+    private var explanationController: WritingExplanationController?
+
+    var explanation: WritingExplanation? { explanationController?.explanation }
+
+    func hide() {
+        explanationController?.cancel(); explanationController = nil
+        panel?.orderOut(nil)
+    }
 
     func show(_ proposal: SentenceProposal, anchor: CGRect, onAccept: @escaping @MainActor () -> Void,
-              onDismiss: @escaping @MainActor () -> Void) {
+              onDismiss: @escaping @MainActor () -> Void,
+              onExplain: @escaping @MainActor () async throws -> WritingExplanation?) {
         let visibleText = proposal.request.sentence.count +
             (proposal.advice.status == .suggest ? proposal.suggestedSentence.count : proposal.advice.message.count)
         let lines = CGFloat(max(2, (visibleText + 47) / 48))
@@ -25,10 +81,13 @@ final class SentenceCandidatePanel {
         panel.level = .floating; panel.isFloatingPanel = true; panel.hidesOnDeactivate = false
         panel.hasShadow = true; panel.isOpaque = false; panel.backgroundColor = .clear
         panel.collectionBehavior = [.moveToActiveSpace, .fullScreenAuxiliary]
+        let explanationController = WritingExplanationController(action: onExplain)
         panel.contentView = NSHostingView(rootView: SentenceCandidateView(
-            proposal: proposal, onAccept: onAccept, onDismiss: onDismiss))
+            proposal: proposal, explanationController: explanationController,
+            onAccept: onAccept, onDismiss: onDismiss))
         panel.setFrame(frame, display: true)
         panel.orderFrontRegardless()
+        self.explanationController = explanationController
         NSAccessibility.post(element: panel, notification: .announcementRequested,
                              userInfo: [.announcement: proposal.advice.status == .suggest
                                 ? "写作建议已显示。请核对原文和建议，按 Control Option Return 接受。"
@@ -39,6 +98,7 @@ final class SentenceCandidatePanel {
 
 private struct SentenceCandidateView: View {
     let proposal: SentenceProposal
+    @ObservedObject var explanationController: WritingExplanationController
     let onAccept: () -> Void
     let onDismiss: () -> Void
 
@@ -68,10 +128,33 @@ private struct SentenceCandidateView: View {
                         Text(proposal.advice.message.isEmpty ? "这句已经合适，可以继续写。" : proposal.advice.message)
                             .font(.body).fixedSize(horizontal: false, vertical: true)
                     }
+                    if proposal.advice.status == .suggest {
+                        explanationSection
+                    }
                     if proposal.scope.context.text != proposal.request.sentence {
                         section("参考语境", text: proposal.scope.context.text)
                     }
                 }.frame(maxWidth: .infinity, alignment: .leading)
+            }
+            if proposal.advice.status == .suggest {
+                switch explanationController.state {
+                case .loaded:
+                    EmptyView()
+                default:
+                    Button(action: explanationController.start) {
+                        switch explanationController.state {
+                        case .loading:
+                            Label("正在解释…", systemImage: "hourglass")
+                        case .failed, .unavailable:
+                            Label("再次请求解释", systemImage: "arrow.clockwise")
+                        default:
+                            Label("为什么这样改？", systemImage: "lightbulb")
+                        }
+                    }
+                    .disabled(explanationController.state == .loading)
+                    .frame(minHeight: 38)
+                    .accessibilityHint("主动请求本次修改的简短解释，不会改变建议")
+                }
             }
             HStack(spacing: 8) {
                 Text(proposal.snapshot.applicationIdentifier == "com.apple.TextEdit"
@@ -88,6 +171,29 @@ private struct SentenceCandidateView: View {
         .padding(16)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .modifier(CandidateCardSurface())
+    }
+
+    @ViewBuilder
+    private var explanationSection: some View {
+        switch explanationController.state {
+        case .loaded(let explanation):
+            VStack(alignment: .leading, spacing: 6) {
+                Text("为什么这样改").font(.caption).foregroundStyle(.secondary)
+                Text(explanation.reason).font(.body).fixedSize(horizontal: false, vertical: true)
+                if !explanation.acceptableVariants.isEmpty {
+                    Text("可用变体：\(explanation.acceptableVariants.joined(separator: "、"))")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+            }
+        case .unavailable:
+            Text("这次建议暂时没有可用解释；仍可接受。")
+                .font(.caption).foregroundStyle(.secondary)
+        case .failed:
+            Text("解释暂时失败；仍可接受。")
+                .font(.caption).foregroundStyle(.secondary)
+        default:
+            EmptyView()
+        }
     }
 
     private func section(_ title: String, text: String) -> some View {

@@ -4,7 +4,7 @@
 
 当前体验包版本见 [交付状态](status.md)。先退出旧进程，再打开新构建的 app。
 
-build 16 在明确写作/阅读快捷键时各记录一条 `captureChecked`，与同次操作共用关联编号。
+build 16 在明确写作/阅读快捷键时各记录一条 `captureChecked`，与同次操作共用关联编号。build 20 的写作解释请求使用 `shortcut=explain`，与候选所属操作共用关联编号；它只记录开始、完成或失败等固定事件，不记录解释原因、变体、原文或建议。
 嵌套 `capture` 只含固定类别、有限长度/计数和 AX 接口结果码；不保存正文、标题、控件描述或完整界面树。
 `focus`/`focusRole` 标识焦点来源和类别，`role` 是最后尝试/成功的文本节点类别，
 `textLength`、`selectionLocation`、`selectionLength` 是有限数值，缺失表示未取得，不等于 0。

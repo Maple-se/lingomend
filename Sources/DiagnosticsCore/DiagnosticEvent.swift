@@ -42,7 +42,7 @@ public enum DiagnosticStage: String, Codable, Sendable {
 }
 public enum DiagnosticScope: String, Codable, Sendable { case selection, currentSentence, excerpt, selectionOnly }
 public enum DiagnosticMode: String, Codable, Sendable { case local, network }
-public enum DiagnosticShortcut: String, Codable, Sendable { case help, read, accept, cancelPeriod, cancelEscape }
+public enum DiagnosticShortcut: String, Codable, Sendable { case help, read, explain, accept, cancelPeriod, cancelEscape }
 public enum DiagnosticLevel: String, Codable, Sendable {
     case debug, info, warning, error
     var priority: Int { switch self { case .debug: 0; case .info: 1; case .warning: 2; case .error: 3 } }

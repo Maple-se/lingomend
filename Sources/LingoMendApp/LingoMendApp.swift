@@ -26,6 +26,7 @@ private final class LingoMendDelegate: NSObject, NSApplicationDelegate, NSMenuDe
     private lazy var service = SentenceService(preferences: AppPreferences.load(), diagnostics: diagnostics.recorder)
     private lazy var readingService = ReadingService(preferences: AppPreferences.load(), diagnostics: diagnostics.recorder)
     private let panel = SentenceCandidatePanel()
+    private let recentPanel = RecentSuggestionPanel()
     private let readingPanel = ReadingPanel()
     private let notice = RequestNotice()
     private lazy var writer = NativeTextPaste(driver: MacOSNativePasteDriver(reader: reader), diagnostics: diagnostics.recorder)
@@ -37,6 +38,7 @@ private final class LingoMendDelegate: NSObject, NSApplicationDelegate, NSMenuDe
     private var helpKeyLine: NSMenuItem?
     private var readKeyLine: NSMenuItem?
     private var permissionLine: NSMenuItem?
+    private var recentMenuItem: NSMenuItem?
     private var trigger: GlobalHotKey?
     private var readingKey: GlobalHotKey?
     private var dismissKey: GlobalHotKey?
@@ -46,6 +48,8 @@ private final class LingoMendDelegate: NSObject, NSApplicationDelegate, NSMenuDe
     private var epoch = UUID()
     private var hasPreview = false
     private var proposal: SentenceProposal?
+    private var activeExplanation: WritingExplanation?
+    private var recentSuggestions = RecentSuggestionStore()
     private var activeSnapshot: TextSnapshot?
     private var activeReading: ReadingCapture?
     private var activeApplication: NSRunningApplication?
@@ -99,6 +103,8 @@ private final class LingoMendDelegate: NSObject, NSApplicationDelegate, NSMenuDe
         read.isEnabled = false; readKeyLine = read; menu.addItem(read)
         let acceptHint = NSMenuItem(title: "候选中：⌃⌥↩ 接受 · Esc / ⌃⌥. 收起", action: nil, keyEquivalent: "")
         acceptHint.isEnabled = false; menu.addItem(acceptHint)
+        let recent = NSMenuItem(title: "最近一次建议…", action: #selector(showRecentSuggestion), keyEquivalent: "")
+        recent.target = self; recent.isEnabled = false; recentMenuItem = recent; menu.addItem(recent)
         menu.addItem(.separator())
         add("设置…", action: #selector(showSettings), to: menu)
         let permission = NSMenuItem(title: "", action: #selector(requestAccessibility), keyEquivalent: "")
@@ -125,6 +131,8 @@ private final class LingoMendDelegate: NSObject, NSApplicationDelegate, NSMenuDe
         modeLine?.title = preferences.networkEnabled ? "状态：模型服务已开启" : "状态：本地固定样例"
         helpKeyLine?.title = triggerRegistered ? "⌃⌥L  写作帮助" : "⌃⌥L  注册失败，请检查快捷键冲突"
         readKeyLine?.title = readingRegistered ? "⌃⌥D  阅读选区" : "⌃⌥D  注册失败，请检查快捷键冲突"
+        recentMenuItem?.title = recentSuggestions.latest == nil ? "最近一次建议（暂无）" : "最近一次建议…"
+        recentMenuItem?.isEnabled = recentSuggestions.latest != nil
         let trusted = AXIsProcessTrusted()
         permissionLine?.title = trusted ? "辅助功能权限：已授权" : "辅助功能权限：需要授权…"
         permissionLine?.isEnabled = !trusted
@@ -140,6 +148,13 @@ private final class LingoMendDelegate: NSObject, NSApplicationDelegate, NSMenuDe
         refreshMenu()
     }
     @objc private func quitApp() { NSApp.terminate(nil) }
+    @objc private func showRecentSuggestion() {
+        guard let latest = recentSuggestions.latest else {
+            feedback("本次会话还没有已接受的建议")
+            return
+        }
+        recentPanel.show(latest, onDismiss: { [weak self] in self?.recentPanel.hide() })
+    }
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         quitAfterAcceptance = true
         if acceptance != nil { feedback("正在完成粘贴检查和剪贴板清理，随后退出", persistent: true) }
@@ -211,7 +226,8 @@ private final class LingoMendDelegate: NSObject, NSApplicationDelegate, NSMenuDe
                 reason: reason, stage: hasPreview ? .candidate : .model), operation: epoch)
         }
         epoch = UUID(); generation?.cancel(); generation = nil
-        hasPreview = false; proposal = nil; activeSnapshot = nil; panel.hide(); notice.hide()
+        hasPreview = false; proposal = nil; activeExplanation = nil; activeSnapshot = nil
+        panel.hide(); notice.hide()
         activeReading = nil; readingReader.clear(); readingPanel.hide()
         unregisterInteractionKeys()
         observer.configure(enabled: false, allowedApplications: [])
@@ -314,11 +330,15 @@ private final class LingoMendDelegate: NSObject, NSApplicationDelegate, NSMenuDe
                     feedback("无法定位光标；请重新把光标放回表达中"); return
                 }
                 hasPreview = true
-                self.proposal = proposal; notice.hide()
+                self.proposal = proposal; activeExplanation = nil; notice.hide()
                 record(DiagnosticEvent(.candidateShown,
                     outcome: diagnosticAdviceOutcome(advice), stage: .candidate), operation: token)
                 panel.show(proposal, anchor: anchor, onAccept: { [weak self] in self?.accept() },
-                    onDismiss: { [weak self] in self?.invalidate(reason: .userCancelled) })
+                    onDismiss: { [weak self] in self?.invalidate(reason: .userCancelled) },
+                    onExplain: { [weak self] in
+                        guard let self else { throw CancellationError() }
+                        return try await self.explain(proposal: proposal, operation: token)
+                    })
                 if proposal.advice.status == .suggest {
                     let accept = GlobalHotKey(keyCode: UInt32(kVK_Return), identifier: 2) { [weak self] in self?.accept() }
                     acceptKey = accept
@@ -386,6 +406,26 @@ private final class LingoMendDelegate: NSObject, NSApplicationDelegate, NSMenuDe
                 feedback(error is CoachingProviderError || error is CredentialError
                     ? providerMessage(error) : "当前编辑器暂不支持读取或定位；请检查光标位置")
             }
+        }
+    }
+
+    private func explain(proposal: SentenceProposal, operation: UUID) async throws -> WritingExplanation? {
+        guard epoch == operation, self.proposal?.request == proposal.request,
+              proposal.advice.status == .suggest else { throw CancellationError() }
+        let request = try WritingExplanationRequest(request: proposal.request,
+            replacement: proposal.advice.replacement)
+        statusLine?.title = "正在解释这次修改…"
+        do {
+            let result = try await service.explain(request, operation: operation)
+            guard epoch == operation, self.proposal?.request == proposal.request else {
+                throw CancellationError()
+            }
+            activeExplanation = result
+            statusLine?.title = result == nil ? "暂时没有可用解释 · 仍可接受" : "修改解释已显示 · 仍可接受"
+            return result
+        } catch {
+            if epoch == operation { statusLine?.title = "解释暂时失败 · 仍可接受" }
+            throw error
         }
     }
 
@@ -472,6 +512,7 @@ private final class LingoMendDelegate: NSObject, NSApplicationDelegate, NSMenuDe
 
     private func accept() {
         guard acceptance == nil, let proposal, proposal.advice.status == .suggest else { return }
+        let recentSuggestion = RecentAcceptedSuggestion(proposal: proposal, explanation: activeExplanation)
         let plan: SentenceEditPlan
         let operation = epoch
         do { plan = try SentenceEditPlan(original: proposal.snapshot, scope: proposal.scope,
@@ -495,6 +536,9 @@ private final class LingoMendDelegate: NSObject, NSApplicationDelegate, NSMenuDe
                 let result = try await writer.accept(plan, operation: operation,
                     applicationIdentifier: targetApplication?.bundleIdentifier,
                     applicationName: targetApplication?.localizedName)
+                recentSuggestions.remember(recentSuggestion)
+                recentMenuItem?.isEnabled = true
+                recentMenuItem?.title = "最近一次建议…"
                 if result.clipboard == .failed { feedback("文本已更新，但剪贴板恢复失败；请检查剪贴板") }
                 else if !result.caretPositioned { feedback("文本已更新；光标位置未确认，请检查后继续写作") }
                 else if !result.preservesFormatting {

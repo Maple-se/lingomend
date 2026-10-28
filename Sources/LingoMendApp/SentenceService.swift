@@ -8,15 +8,20 @@ final class SentenceService {
     let preferences: AppPreferences
     var modeLabel: String { preferences.networkEnabled ? "DeepSeek · 按需求助" : "固定本地演示 · 按需求助" }
     private var provider: (any SentenceAdvising)?
+    private var explanationProvider: (any WritingExplaining)?
     private var cache: [(SentenceRequest, SentenceAdvice, Date)] = []
+    private var explanationCache: [(WritingExplanationRequest, WritingExplanation?, Date)] = []
     private var lastStart = Date.distantPast
+    private var explanationLastStart = Date.distantPast
     private var cooldownUntil = Date.distantPast
     private var cooldownError = CoachingProviderError.rateLimited
     private let diagnostics: any DiagnosticRecording
 
     init(preferences: AppPreferences, provider: (any SentenceAdvising)? = nil,
+         explanationProvider: (any WritingExplaining)? = nil,
          diagnostics: any DiagnosticRecording = NoOpDiagnostics()) {
         self.preferences = preferences; self.provider = provider
+        self.explanationProvider = explanationProvider
         self.diagnostics = diagnostics
     }
 
@@ -72,6 +77,82 @@ final class SentenceService {
             try Task.checkCancellation(); try result.validate(for: request)
             cache.append((request, result, Date().addingTimeInterval(60)))
             if cache.count > 8 { cache.removeFirst(cache.count - 8) }
+            return result
+        } catch let error as CoachingProviderError {
+            if error == .rateLimited || error == .unauthorized {
+                cooldownUntil = Date().addingTimeInterval(30); cooldownError = error
+            }
+            throw error
+        }
+    }
+
+    /// Explanation is a separate, explicit request. A failure here never changes
+    /// the already generated candidate or blocks the acceptance path.
+    func explain(_ request: WritingExplanationRequest, operation: UUID? = nil) async throws -> WritingExplanation? {
+        let start = ContinuousClock.now
+        let mode: DiagnosticMode = preferences.networkEnabled ? .network : .local
+        diagnostics.record(DiagnosticEvent(.modelStarted, stage: .model, mode: mode,
+            shortcut: .explain), operation: operation)
+        do {
+            let result = try await generateExplanation(request, operation: operation)
+            diagnostics.record(DiagnosticEvent(.modelCompleted, outcome: .success,
+                stage: .model, mode: mode, shortcut: .explain,
+                durationMS: diagnosticMilliseconds(since: start)), operation: operation)
+            return result
+        } catch {
+            let status: Int? = if case CoachingProviderError.httpStatus(let code) = error { code } else { nil }
+            diagnostics.record(DiagnosticEvent(.modelFailed,
+                level: error is CancellationError ? .info : .error,
+                outcome: error is CancellationError ? .cancelled : .failed,
+                reason: diagnosticReason(error), stage: .model, mode: mode,
+                shortcut: .explain, durationMS: diagnosticMilliseconds(since: start),
+                httpStatus: status), operation: operation)
+            throw error
+        }
+    }
+
+    private func generateExplanation(_ request: WritingExplanationRequest,
+                                     operation: UUID?) async throws -> WritingExplanation? {
+        try Task.checkCancellation(); try request.validate()
+        if let item = explanationCache.last(where: { $0.0 == request && $0.2 > Date() }) {
+            diagnostics.record(DiagnosticEvent(.cacheHit, shortcut: .explain), operation: operation)
+            return item.1
+        }
+        if preferences.networkEnabled {
+            guard cooldownUntil <= Date() else {
+                diagnostics.record(DiagnosticEvent(.cooldownRejected, outcome: .refused,
+                    shortcut: .explain), operation: operation)
+                throw cooldownError
+            }
+            if Date().timeIntervalSince(explanationLastStart) < 3 {
+                diagnostics.record(DiagnosticEvent(.throttleWait, shortcut: .explain), operation: operation)
+            }
+            while Date().timeIntervalSince(explanationLastStart) < 3 {
+                try await Task.sleep(for: .seconds(3 - Date().timeIntervalSince(explanationLastStart)))
+            }
+            try Task.checkCancellation()
+            guard cooldownUntil <= Date() else { throw cooldownError }
+            explanationLastStart = Date()
+        }
+        if explanationProvider == nil {
+            if let existing = provider as? any WritingExplaining {
+                explanationProvider = existing
+            } else if preferences.networkEnabled {
+                let key = try ProviderCredentials.read(for: preferences.provider)
+                guard !key.isEmpty else { throw CoachingProviderError.unauthorized }
+                explanationProvider = DeepSeekSentenceProvider(configuration: preferences.provider, apiKey: key)
+            } else {
+                explanationProvider = DemoSentenceProvider()
+            }
+        }
+        do {
+            diagnostics.record(DiagnosticEvent(.providerInvoked, stage: .model, mode: preferences.networkEnabled ? .network : .local,
+                shortcut: .explain), operation: operation)
+            let result = try await explanationProvider!.explain(request)
+            try Task.checkCancellation()
+            if let result { try result.validate(for: request) }
+            explanationCache.append((request, result, Date().addingTimeInterval(60)))
+            if explanationCache.count > 8 { explanationCache.removeFirst(explanationCache.count - 8) }
             return result
         } catch let error as CoachingProviderError {
             if error == .rateLimited || error == .unauthorized {

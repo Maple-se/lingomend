@@ -11,7 +11,7 @@ voice. Read selected expressions in context on demand.
 
 ## Current delivery
 
-T3 closeout experience build. The [status page](docs/status.md) is the source for the
+T4.1 experience build 20. The [status page](docs/status.md) is the source for the
 current version, app/area compatibility and unresolved work. The [development plan](docs/development-stages.md)
 defines stages; [product requirements](docs/product-requirements.md) tracks effective behavior and backlog.
 WeChat capture remains unresolved and deferred. Other apps have different evidence and
@@ -36,8 +36,12 @@ limits; no claim is made that every text field works.
 - Local, optional content-free diagnostics: development defaults on; release/unknown defaults
   off. At most five 1 MiB log files per channel with seven-day retention. No log upload.
 
-Writing explanations, post-acceptance review and voluntary expression cards are planned for
-T4. LearningCore foundations do not imply a shipped learning UI or proven mastery detection.
+Writing explanations and post-acceptance review are available in T4.1: use the candidate's
+explicit **为什么这样改？** action, then open **最近一次建议…** from the menu after a
+successful acceptance. The explanation is optional and does not gate acceptance; the recent
+record is in-memory for the current session and does not save the full draft. Voluntary
+expression cards remain planned for T4.2. LearningCore foundations do not imply proven
+mastery detection.
 The retired in-app input prototype is no longer an entry point.
 
 ## Try it locally
@@ -55,7 +59,8 @@ manually grant Accessibility permission. Rebuilt ad-hoc signed apps may need rea
 Configure the model under **Model Service**; a connection test sends one synthetic request
 and may incur a charge even with normal networking disabled. Never put a key in this repo.
 
-Use the [current experience and regression steps](docs/t3-global-experience.md).
+Use the [current T4.1 experience and regression steps](docs/t4-writing-explanation-experience.md)
+and the [T3 compatibility steps](docs/t3-global-experience.md).
 [Word body-text cases](docs/t3-word-build17-experience.md), [reading cases](docs/t3-reading-experience.md),
 [local diagnostics](docs/diagnostics-experience.md) and [synthetic quality review](docs/quality-review.md)
 provide focused checks. Default tests do not use paid services; explicit live quality review

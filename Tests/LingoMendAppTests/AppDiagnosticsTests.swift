@@ -18,6 +18,12 @@ private actor TestSentenceProvider: SentenceAdvising {
         return SentenceAdvice(status: .unchanged)
     }
 }
+
+private struct TestWritingExplainer: WritingExplaining {
+    func explain(_ request: WritingExplanationRequest) async throws -> WritingExplanation? {
+        WritingExplanation(reason: "PRIVATE_RESPONSE_REASON", category: .grammar)
+    }
+}
 final class AppDiagnosticsTests: XCTestCase {
     @MainActor func testChannelPreferencesAreIndependentAndDoNotTouchAPISettings() async throws {
         let suite = "lingomend-diagnostics-test-\(UUID())"
@@ -70,5 +76,19 @@ final class AppDiagnosticsTests: XCTestCase {
         do { _ = try await task.value; XCTFail() } catch { XCTAssertTrue(error is CancellationError) }
         XCTAssertEqual(spy.events.last?.0.outcome, .cancelled)
         XCTAssertEqual(spy.events.last?.0.level, .info)
+    }
+
+    @MainActor func testWritingExplanationDiagnosticsContainNoDraftOrResponseText() async throws {
+        let spy = EventSpy()
+        let service = SentenceService(preferences: AppPreferences(),
+            provider: DemoSentenceProvider(), explanationProvider: TestWritingExplainer(), diagnostics: spy)
+        let source = "SYNTHETIC_PRIVATE_DRAFT"
+        let request = try WritingExplanationRequest(
+            request: SentenceRequest(target: source), replacement: "A safe sentence.")
+        _ = try await service.explain(request, operation: UUID())
+        let encoded = String(decoding: try JSONEncoder().encode(spy.events.map(\.0)), as: UTF8.self)
+        XCTAssertFalse(encoded.contains(source))
+        XCTAssertFalse(encoded.contains("PRIVATE_RESPONSE_REASON"))
+        XCTAssertFalse(encoded.contains("A safe sentence."))
     }
 }
