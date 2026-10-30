@@ -2,7 +2,7 @@ import AppKit
 import ApplicationServices
 import DiagnosticsCore
 
-/// One collector per explicit shortcut, discarded before model work/revalidation.
+/// One collector per capture or source recheck; never retains AX objects or text.
 @MainActor
 final class AXCaptureProbe {
     var focus: CaptureDiagnostic.Focus = .unavailable

@@ -161,6 +161,26 @@ final class LocalDiagnosticsTests: XCTestCase, @unchecked Sendable {
         XCTAssertEqual(record["length"] as? Int, 0)
         XCTAssertNil(record["httpStatus"])
     }
+    func testClipboardDiagnosticsAreBoundedAndSurviveApplicationAttachment() throws {
+        let details = ClipboardDiagnostic(reason: .byteLimit, items: 9000, types: 9000, bytes: 4_194_305)
+        let event = DiagnosticEvent(.acceptanceFailed, clipboard: details)
+            .withApplication(identifier: "synthetic.editor", name: "Synthetic")
+        let encoded = try JSONEncoder().encode(event)
+        let result = try JSONDecoder().decode(DiagnosticEvent.self, from: encoded)
+        XCTAssertEqual(result.clipboard?.items, 33); XCTAssertEqual(result.clipboard?.types, 65)
+        XCTAssertEqual(result.clipboard?.size, .over4MiB); XCTAssertEqual(result.clipboard?.reason, .byteLimit)
+        let object = try XCTUnwrap(JSONSerialization.jsonObject(with: encoded) as? [String: Any])
+        let fields = try XCTUnwrap(object["clipboard"] as? [String: Any])
+        XCTAssertEqual(Set(fields.keys), ["reason", "items", "types", "size"])
+        XCTAssertEqual(ClipboardDiagnostic.Size(bytes: -1), .empty)
+        XCTAssertEqual(ClipboardDiagnostic.Size(bytes: 65_536), .upTo64KiB)
+        XCTAssertEqual(ClipboardDiagnostic.Size(bytes: 65_537), .upTo1MiB)
+        XCTAssertEqual(ClipboardDiagnostic.Size(bytes: 4_194_304), .upTo4MiB)
+        // Older records remain decodable after adding optional failure details.
+        let old = try JSONDecoder().decode(DiagnosticEvent.self,
+            from: Data(#"{"name":"acceptanceFailed","level":"error","reason":"clipboardUnavailable"}"#.utf8))
+        XCTAssertNil(old.clipboard)
+    }
     func testCaptureSchemaContainsOnlyFixedCategoriesAndBoundedMetrics() throws {
         let capture = CaptureDiagnostic(focus: .system, role: .init(systemRole: "PRIVATE_TEXT_NOT_A_ROLE"),
             stop: .timeLimit, nodes: 9999, depth: 999, candidates: -8, textLength: 999999,

@@ -74,6 +74,33 @@ private final class PasteEventSpy: DiagnosticRecording, @unchecked Sendable {
 }
 
 final class NativeTextEditPasteTests: XCTestCase {
+  @MainActor func testClipboardRefusalRetainsSubreasonAndOperationWithoutPastingOrLoggingContents() async throws {
+    let spy = PasteEventSpy(), operation = UUID()
+    let (board, driver, writer, plan) = try fixture(diagnostics: spy)
+    defer { board.releaseGlobally() }
+    board.clearContents()
+    let privateType = NSPasteboard.PasteboardType("com.apple.filepromise")
+    let item = NSPasteboardItem()
+    XCTAssertTrue(item.setData(Data("PRIVATE_CLIPBOARD".utf8), forType: privateType))
+    XCTAssertTrue(board.writeObjects([item]))
+    let count = board.changeCount
+    do { _ = try await writer.accept(plan, operation: operation); XCTFail() }
+    catch { XCTAssertEqual(error as? NativePasteError, .clipboardUnavailable) }
+    let failure = try XCTUnwrap(spy.events.last?.0)
+    XCTAssertEqual(failure.name, .acceptanceFailed)
+    XCTAssertEqual(failure.reason, .clipboardUnavailable)
+    XCTAssertEqual(failure.clipboard?.reason, .promisedData)
+    XCTAssertEqual(failure.dispatched, false); XCTAssertEqual(failure.stage, .clipboard)
+    XCTAssertEqual(spy.events.last?.1, operation)
+    XCTAssertEqual(writer.clipboardRejection?.reason, .promisedData)
+    XCTAssertEqual(driver.pastes, 0); XCTAssertEqual(board.changeCount, count)
+    XCTAssertEqual(driver.view.string, plan.original.text)
+    XCTAssertFalse(spy.events.contains { $0.0.name == .clipboardBorrowed || $0.0.name == .pasteDispatched })
+    let encoded = String(decoding: try JSONEncoder().encode(spy.events.map(\.0)), as: UTF8.self)
+    for value in [privateType.rawValue, "PRIVATE_CLIPBOARD", plan.original.text, plan.replacement] {
+      XCTAssertFalse(encoded.contains(value))
+    }
+  }
   @MainActor func testGenericPlainInputRefusesChangedFocusBeforePaste() async throws {
     let board = NSPasteboard(name: NSPasteboard.Name("lingomend-plain-focus-\(UUID())"))
     defer { board.releaseGlobally() }

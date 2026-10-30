@@ -1,4 +1,5 @@
 import AppKit
+import DiagnosticsCore
 
 public enum ClipboardRestoration: Equatable, Sendable { case restored, changedExternally, failed }
 
@@ -11,6 +12,7 @@ public final class NativeClipboardLease {
   private var saved: [[NSPasteboard.PasteboardType: Data]]?
   private var token: Data?
   private var ownedChangeCount: Int?
+  public private(set) var rejection: ClipboardDiagnostic?
 
   public init(board: NSPasteboard = .general) { self.board = board }
 
@@ -21,24 +23,35 @@ public final class NativeClipboardLease {
 
   public func begin(rtf: Data? = nil, text: String) throws {
     guard saved == nil else { throw NativePasteError.busy }
+    rejection = nil
     let count = board.changeCount
-    let items = board.pasteboardItems ?? []
-    guard items.count <= 32, !items.isEmpty || (board.types ?? []).isEmpty else {
-      throw NativePasteError.clipboardUnavailable
+    guard let items = board.pasteboardItems else { throw reject(.itemsUnavailable, items: 0) }
+    guard items.count <= 32 else {
+      throw reject(.itemLimit, items: items.count)
+    }
+    guard !items.isEmpty || (board.types ?? []).isEmpty else {
+      throw reject(.itemsUnavailable, items: items.count)
     }
     var snapshot: [[NSPasteboard.PasteboardType: Data]] = []
     var total = 0
     for item in items {
-      guard item.types.count <= 64, !item.types.isEmpty else {
-        throw NativePasteError.clipboardUnavailable
+      guard !item.types.isEmpty else {
+        throw reject(.emptyTypes, items: items.count, bytes: total)
+      }
+      guard item.types.count <= 64 else {
+        throw reject(.typeLimit, items: items.count, types: item.types.count, bytes: total)
       }
       var contents: [NSPasteboard.PasteboardType: Data] = [:]
       for type in item.types {
         // File promises/providers cannot be recreated faithfully with raw bytes.
-        guard !type.rawValue.lowercased().contains("promise"),
-          let data = item.data(forType: type), data.count <= 4_194_304 - total
-        else {
-          throw NativePasteError.clipboardUnavailable
+        guard !type.rawValue.lowercased().contains("promise") else {
+          throw reject(.promisedData, items: items.count, types: item.types.count, bytes: total)
+        }
+        guard let data = item.data(forType: type) else {
+          throw reject(.dataUnavailable, items: items.count, types: item.types.count, bytes: total)
+        }
+        guard data.count <= 4_194_304 - total else {
+          throw reject(.byteLimit, items: items.count, types: item.types.count, bytes: 4_194_305)
         }
         total += data.count
         contents[type] = data
@@ -50,23 +63,30 @@ public final class NativeClipboardLease {
     let item = NSPasteboardItem()
     guard (rtf == nil || item.setData(rtf!, forType: .rtf)), item.setString(text, forType: .string),
       item.setData(token, forType: Self.markerType)
-    else { throw NativePasteError.clipboardUnavailable }
+    else { throw reject(.payloadUnavailable, items: items.count, bytes: total) }
     saved = snapshot
     self.token = token
     board.clearContents()
     ownedChangeCount = board.changeCount
     guard board.writeObjects([item]) else {
+      let failure = reject(.writeFailed, items: items.count, bytes: total)
       // Restore only the still-empty board that we cleared, not another app's copy.
       if restoreAfterFailedWrite() == .failed {
         throw NativePasteError.clipboardRestorationFailed(dispatched: false)
       }
-      throw NativePasteError.clipboardUnavailable
+      throw failure
     }
     ownedChangeCount = board.changeCount
     guard ownsContents else {
       restore()
       throw NativePasteError.clipboardChanged
     }
+  }
+
+  private func reject(_ reason: ClipboardDiagnostic.Reason, items: Int, types: Int = 0,
+                      bytes: Int = 0) -> NativePasteError {
+    rejection = ClipboardDiagnostic(reason: reason, items: items, types: types, bytes: bytes)
+    return .clipboardUnavailable
   }
 
   @discardableResult public func restore() -> ClipboardRestoration {

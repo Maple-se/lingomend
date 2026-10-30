@@ -13,6 +13,7 @@ public enum BuildChannel: String, Codable, Sendable {
 public enum DiagnosticName: String, Codable, Sendable {
     case sessionStarted, appStarted, appStopping, permissionChecked, hotKeyRegistered
     case helpStarted, scopeResolved, helpFailed, candidateShown, candidateDismissed, captureChecked
+    case sourceRechecked, captureSettling
     case readingStarted, readingCaptured, readingShown, readingFailed
     case modelStarted, providerInvoked, modelCompleted, modelFailed, cacheHit, throttleWait, cooldownRejected
     case acceptanceStarted, preflightPassed, formatPrepared, clipboardBorrowed, pasteDispatched
@@ -25,7 +26,7 @@ public enum DiagnosticOutcome: String, Codable, Sendable {
 }
 public enum DiagnosticReason: String, Codable, Sendable {
     case userCancelled, superseded, sourceOrFocusChanged, settingsChanged
-    case sourceChanged, selectionChanged, focusChanged, sourceReadFailed
+    case sourceChanged, selectionChanged, focusChanged, sourceReadFailed, sourceUnavailable
     case permissionRequired, captureUnavailable, applicationNotAllowed, empty, multipleSentences
     case tooLong, invalidRange, unsupportedInput, anchorUnavailable
     case focusedElementUnavailable, focusedWindowUnavailable, editableControlUnavailable
@@ -38,7 +39,7 @@ public enum DiagnosticReason: String, Codable, Sendable {
     case clipboardChanged, selectionFailed, eventUnavailable, resultUnconfirmed, clipboardRestorationFailed
 }
 public enum DiagnosticStage: String, Codable, Sendable {
-    case capture, scope, model, candidate, preflight, format, clipboard, selection, dispatch, verification, cleanup
+    case capture, scope, model, candidate, revalidation, preflight, format, clipboard, selection, dispatch, verification, cleanup
 }
 public enum DiagnosticScope: String, Codable, Sendable { case selection, currentSentence, excerpt, selectionOnly }
 public enum DiagnosticMode: String, Codable, Sendable { case local, network }
@@ -68,6 +69,7 @@ public struct DiagnosticEvent: Codable, Sendable {
     public let applicationIdentifier: String?
     public let applicationName: String?
     public let capture: CaptureDiagnostic?
+    public let clipboard: ClipboardDiagnostic?
 
     public init(_ name: DiagnosticName, level: DiagnosticLevel = .info,
                 outcome: DiagnosticOutcome? = nil, reason: DiagnosticReason? = nil,
@@ -76,7 +78,7 @@ public struct DiagnosticEvent: Codable, Sendable {
                 length: Int? = nil, durationMS: Int? = nil,
                 httpStatus: Int? = nil, dispatched: Bool? = nil, count: Int? = nil,
                 applicationIdentifier: String? = nil, applicationName: String? = nil,
-                capture: CaptureDiagnostic? = nil) {
+                capture: CaptureDiagnostic? = nil, clipboard: ClipboardDiagnostic? = nil) {
         self.name = name; self.level = level; self.outcome = outcome; self.reason = reason
         self.stage = stage; self.scope = scope; self.mode = mode
         self.shortcut = shortcut
@@ -87,13 +89,14 @@ public struct DiagnosticEvent: Codable, Sendable {
         self.applicationIdentifier = Self.boundedSystemValue(applicationIdentifier)
         self.applicationName = Self.boundedSystemValue(applicationName)
         self.capture = capture
+        self.clipboard = clipboard
     }
 
     public func withApplication(identifier: String?, name: String?) -> DiagnosticEvent {
         DiagnosticEvent(self.name, level: level, outcome: outcome, reason: reason, stage: stage,
             scope: scope, mode: mode, shortcut: shortcut, length: length, durationMS: durationMS,
             httpStatus: httpStatus, dispatched: dispatched, count: count,
-            applicationIdentifier: identifier, applicationName: name, capture: capture)
+            applicationIdentifier: identifier, applicationName: name, capture: capture, clipboard: clipboard)
     }
 
     private static func boundedSystemValue(_ value: String?) -> String? {

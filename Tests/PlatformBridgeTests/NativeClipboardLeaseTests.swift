@@ -1,5 +1,6 @@
 import AppKit
 import PlatformBridge
+import DiagnosticsCore
 import XCTest
 
 final class NativeClipboardLeaseTests: XCTestCase {
@@ -54,17 +55,51 @@ final class NativeClipboardLeaseTests: XCTestCase {
   @MainActor func testLargeDataAndFilePromisesAreRejectedBeforeClearing() async throws {
     let board = board()
     defer { board.releaseGlobally() }
-    for (type, data) in [
-      (NSPasteboard.PasteboardType("synthetic.large"), Data(repeating: 7, count: 4_194_305)),
-      (NSPasteboard.PasteboardType("com.apple.filepromise"), Data("PROMISE".utf8)),
+    for (type, data, reason) in [
+      (NSPasteboard.PasteboardType("synthetic.large"), Data(repeating: 7, count: 4_194_305), ClipboardDiagnostic.Reason.byteLimit),
+      (NSPasteboard.PasteboardType("com.apple.filepromise"), Data("PROMISE".utf8), .promisedData),
     ] {
       board.clearContents()
       board.setData(data, forType: type)
       let count = board.changeCount
-      XCTAssertThrowsError(
-        try NativeClipboardLease(board: board).begin(rtf: Data(), text: "SUGGESTION"))
+      let lease = NativeClipboardLease(board: board)
+      XCTAssertThrowsError(try lease.begin(rtf: Data(), text: "SUGGESTION"))
+      XCTAssertEqual(lease.rejection?.reason, reason)
       XCTAssertEqual(board.changeCount, count)
       XCTAssertEqual(board.data(forType: type), data)
     }
+  }
+  @MainActor func testItemAndTypeLimitsAreDistinctAndRefusalDoesNotClearClipboard() throws {
+    let board = board()
+    defer { board.releaseGlobally() }
+    let lease = NativeClipboardLease(board: board)
+    let items = (0..<33).map { index in
+      let item = NSPasteboardItem(); item.setString("SYNTHETIC_\(index)", forType: .string); return item
+    }
+    board.clearContents(); XCTAssertTrue(board.writeObjects(items))
+    var count = board.changeCount
+    XCTAssertThrowsError(try lease.begin(text: "SUGGESTION"))
+    XCTAssertEqual(lease.rejection?.reason, .itemLimit); XCTAssertEqual(board.changeCount, count)
+    let item = NSPasteboardItem()
+    for index in 0..<65 { item.setData(Data([0]), forType: .init("synthetic.type.\(index)")) }
+    board.clearContents(); XCTAssertTrue(board.writeObjects([item])); count = board.changeCount
+    XCTAssertThrowsError(try lease.begin(text: "SUGGESTION"))
+    XCTAssertEqual(lease.rejection?.reason, .typeLimit); XCTAssertEqual(board.changeCount, count)
+    // A refusal is per-attempt; the next successful lease must not report an old cause.
+    board.clearContents(); board.setString("BEFORE", forType: .string)
+    try lease.begin(text: "SUGGESTION")
+    XCTAssertNil(lease.rejection); XCTAssertEqual(lease.restore(), .restored)
+  }
+  @MainActor func testDeclaredButUnavailableDataIsRefusedWithoutDroppingTheType() throws {
+    let board = board()
+    defer { board.releaseGlobally() }
+    let type = NSPasteboard.PasteboardType("synthetic.unavailable")
+    board.declareTypes([type], owner: nil)
+    let count = board.changeCount
+    let lease = NativeClipboardLease(board: board)
+    XCTAssertThrowsError(try lease.begin(text: "SUGGESTION"))
+    XCTAssertEqual(lease.rejection?.reason, .dataUnavailable)
+    XCTAssertEqual(board.changeCount, count)
+    XCTAssertTrue((board.types ?? []).contains(type))
   }
 }

@@ -196,22 +196,15 @@ private final class LingoMendDelegate: NSObject, NSApplicationDelegate, NSMenuDe
 
     private func checkObservedChange() {
         if let reading = activeReading {
-            if let reason = readingReader.changeReason(for: reading) { discardChangedPreview(reason: reason) }
+            if let reason = readingReader.changeReason(for: reading, diagnostics: diagnostics.recorder,
+                                                       operation: epoch) { discardChangedPreview(reason: reason) }
             return
         }
         guard let snapshot = activeSnapshot, acceptance == nil else { return }
         let token = epoch
-        Task { @MainActor [weak self] in
-            guard let self, epoch == token else { return }
-            // AX notifications may repeat without any real source/selection change.
-            do {
-                let current = try await reader.readFocusedText()
-                guard epoch == token, let reason = current.changeReason(comparedTo: snapshot) else { return }
-                discardChangedPreview(reason: reason)
-            } catch {
-                guard epoch == token else { return }
-                discardChangedPreview(reason: .sourceReadFailed)
-            }
+        // Synchronous revalidation cannot retarget or outlive the current epoch.
+        if let reason = reader.changeReason(for: snapshot, diagnostics: diagnostics.recorder, operation: token) {
+            discardChangedPreview(reason: reason)
         }
     }
 
@@ -335,10 +328,9 @@ private final class LingoMendDelegate: NSObject, NSApplicationDelegate, NSMenuDe
                 try Task.checkCancellation()
                 guard epoch == token else { return }
                 stage = .candidate
-                let current = try await reader.readFocusedText()
-                try Task.checkCancellation()
-                guard epoch == token else { return }
-                if let reason = current.changeReason(comparedTo: snapshot) { discardChangedPreview(reason: reason); return }
+                if let reason = reader.changeReason(for: snapshot, diagnostics: diagnostics.recorder, operation: token) {
+                    discardChangedPreview(reason: reason); return
+                }
                 let proposal = try SentenceProposal(snapshot: snapshot, scope: scope, advice: advice)
                 hasPreview = true
                 self.proposal = proposal; activeExplanation = nil; notice.hide()
@@ -468,7 +460,7 @@ private final class LingoMendDelegate: NSObject, NSApplicationDelegate, NSMenuDe
                 }
             }
             do {
-                let capture = try readingReader.capture(diagnostics: diagnostics.recorder, operation: token)
+                let capture = try await readingReader.captureAfterSettling(diagnostics: diagnostics.recorder, operation: token)
                 try Task.checkCancellation()
                 guard epoch == token else { return }
                 activeReading = capture
@@ -488,7 +480,8 @@ private final class LingoMendDelegate: NSObject, NSApplicationDelegate, NSMenuDe
                 try Task.checkCancellation()
                 guard epoch == token else { return }
                 stage = .candidate
-                if let reason = readingReader.changeReason(for: capture) { discardChangedPreview(reason: reason); return }
+                if let reason = readingReader.changeReason(for: capture, diagnostics: diagnostics.recorder,
+                                                           operation: token) { discardChangedPreview(reason: reason); return }
                 hasPreview = true; notice.hide()
                 readingPanel.show(request: request, explanation: explanation, anchor: capture.anchor,
                     onDismiss: { [weak self] in self?.invalidate(reason: .userCancelled) })
@@ -569,7 +562,7 @@ private final class LingoMendDelegate: NSObject, NSApplicationDelegate, NSMenuDe
                 feedback(dispatched ? "已发送粘贴，但剪贴板恢复失败；请检查原文和剪贴板"
                     : "未发送粘贴，但剪贴板恢复失败；请检查剪贴板")
             } catch NativePasteError.clipboardUnavailable {
-                feedback("无法可靠保存剪贴板内容；未发送粘贴，请换用普通文本剪贴板后重试")
+                feedback(clipboardRefusalMessage(writer.clipboardRejection?.reason))
             } catch NativePasteError.formatUnavailable, NativePasteError.unsupportedFormat {
                 feedback("当前格式无法可靠保持；未发送粘贴，请先在普通文本或基础富文本中体验")
             } catch NativePasteError.modifiersHeld {

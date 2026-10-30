@@ -53,6 +53,10 @@ public final class MacOSAccessibilityTextReader: FocusedTextReading, SafeTextRep
         let collector = AXCaptureProbe()
         probe = collector
         let app = NSWorkspace.shared.frontmostApplication
+        let initialWindow = app.flatMap {
+            AXEditorAccess.element(AXEditorAccess.attribute(AXUIElementCreateApplication($0.processIdentifier),
+                kAXFocusedWindowAttribute))
+        }
         var succeeded = false
         defer {
             if probe === collector { probe = nil }
@@ -62,19 +66,45 @@ public final class MacOSAccessibilityTextReader: FocusedTextReading, SafeTextRep
                 applicationIdentifier: app?.bundleIdentifier, applicationName: app?.localizedName,
                 capture: collector.summary()), operation: operation)
         }
-        do { let result = try captureFocusedText(); succeeded = true; return result }
-        catch let error as AccessibilityCaptureError {
-            guard error == .editableControlUnavailable || error == .focusedElementUnavailable
-                || error == .textUnavailable || error == .selectionUnavailable else { throw error }
-            let pid = app?.processIdentifier
-            // One bounded settling attempt for a lazily enabled AX tree, only
-            // during an explicit shortcut, never during final preflight.
-            try await Task.sleep(for: .milliseconds(100))
-            guard NSWorkspace.shared.frontmostApplication?.processIdentifier == pid else {
-                throw AccessibilityCaptureError.focusChangedDuringCapture
-            }
-            let result = try captureFocusedText(); succeeded = true; return result
+        let result = try await CaptureSettling.run(sameSource: {
+            guard let app, let initialWindow else { return false }
+            return self.isCurrentWindow(initialWindow, pid: app.processIdentifier)
+        }, retrying: { error in
+            initialWindow != nil && (error == .editableControlUnavailable || error == .focusedElementUnavailable
+                || error == .textUnavailable || error == .selectionUnavailable)
+        }, onRetry: { error in
+            diagnostics.record(DiagnosticEvent(.captureSettling, reason: error.diagnosticReason,
+                stage: .capture, shortcut: .help, count: 1,
+                applicationIdentifier: app?.bundleIdentifier, applicationName: app?.localizedName), operation: operation)
+        }, attempt: { try self.captureFocusedText() })
+        succeeded = true
+        return result
+    }
+
+    /// No settling or alternate target after a proposal exists. Only failures and
+    /// actual changes are recorded, so repeated AX notifications do not flood logs.
+    public func changeReason(for original: TextSnapshot, diagnostics: any DiagnosticRecording,
+                             operation: UUID) -> DiagnosticReason? {
+        let collector = AXCaptureProbe()
+        let previousProbe = probe
+        probe = collector
+        defer { probe = previousProbe }
+        let reason: DiagnosticReason?
+        let detail: DiagnosticReason?
+        do {
+            reason = try captureFocusedText().changeReason(comparedTo: original)
+            detail = reason
+        } catch {
+            reason = .sourceReadFailed
+            detail = (error as? AccessibilityCaptureError)?.diagnosticReason ?? .captureUnavailable
         }
+        if let detail {
+            diagnostics.record(DiagnosticEvent(.sourceRechecked, outcome: .refused,
+                reason: detail, stage: .revalidation, shortcut: .help,
+                applicationIdentifier: original.applicationIdentifier,
+                capture: collector.summary()), operation: operation)
+        }
+        return reason
     }
 
     // Synchronous form for a final validation and addressed paste with no suspension in between.

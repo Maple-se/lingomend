@@ -108,6 +108,7 @@ public final class NativeTextEditPaste {
   private let clipboard: NativeClipboardLease
   private let diagnostics: any DiagnosticRecording
   public private(set) var isBusy = false
+  public private(set) var clipboardRejection: ClipboardDiagnostic?
 
   public init(
     driver: any NativePasteDriving, clipboard: NativeClipboardLease = NativeClipboardLease(),
@@ -123,6 +124,7 @@ public final class NativeTextEditPaste {
                      applicationName: String? = nil) async throws -> NativePasteResult {
     let start = ContinuousClock.now
     var progress = AcceptanceProgress()
+    clipboardRejection = nil
     record(DiagnosticEvent(.acceptanceStarted, length: plan.scope.target.text.utf16.count), operation: operation,
       applicationIdentifier: applicationIdentifier, applicationName: applicationName)
     do {
@@ -135,10 +137,12 @@ public final class NativeTextEditPaste {
         applicationIdentifier: applicationIdentifier, applicationName: applicationName)
       return result
     } catch {
+      if progress.stage == .clipboard { clipboardRejection = clipboard.rejection }
       record(DiagnosticEvent(.acceptanceFailed, level: error is CancellationError ? .info : .error,
         outcome: progress.dispatched ? .unconfirmed : (error is CancellationError ? .cancelled : .refused),
         reason: pasteDiagnosticReason(error), stage: progress.stage,
-        durationMS: diagnosticMilliseconds(since: start), dispatched: progress.dispatched), operation: operation,
+        durationMS: diagnosticMilliseconds(since: start), dispatched: progress.dispatched,
+        clipboard: clipboardRejection), operation: operation,
         applicationIdentifier: applicationIdentifier, applicationName: applicationName)
       throw error
     }
@@ -260,7 +264,7 @@ public final class NativeTextEditPaste {
 
   private func pasteDiagnosticReason(_ error: Error) -> DiagnosticReason {
     if error is CancellationError { return .userCancelled }
-    if case AccessibilityCaptureError.permissionRequired = error { return .permissionRequired }
+    if let captureError = error as? AccessibilityCaptureError { return captureError.diagnosticReason }
     guard let error = error as? NativePasteError else { return .unknown }
     switch error {
     case .busy: return .busy

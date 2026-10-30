@@ -87,21 +87,7 @@ func diagnosticReason(_ error: Error) -> DiagnosticReason {
         case .invalidRange: return .invalidRange }
     }
     if let error = error as? AccessibilityCaptureError {
-        switch error {
-        case .permissionRequired: return .permissionRequired
-        case .focusedElementUnavailable: return .focusedElementUnavailable
-        case .focusedWindowUnavailable: return .focusedWindowUnavailable
-        case .editableControlUnavailable: return .editableControlUnavailable
-        case .applicationUnavailable: return .applicationUnavailable
-        case .textUnavailable: return .textUnavailable
-        case .textTooLarge: return .tooLong
-        case .selectionUnavailable: return .selectionUnavailable
-        case .invalidSelection: return .invalidRange
-        case .disjointSelection: return .invalidRange
-        case .focusChangedDuringCapture: return .focusChangedDuringCapture
-        case .protectedField: return .protectedField
-        case .applicationNotAllowed: return .applicationNotAllowed
-        }
+        return error.diagnosticReason
     }
     if let error = error as? AccessibilityReplacementError {
         switch error {
@@ -116,6 +102,21 @@ func diagnosticReason(_ error: Error) -> DiagnosticReason {
     }
     if error is SentenceInputError { return .unsupportedInput }
     return .captureUnavailable
+}
+
+func clipboardRefusalMessage(_ reason: ClipboardDiagnostic.Reason?) -> String {
+    switch reason {
+    case .byteLimit:
+        "剪贴板备份超过安全大小上限；未发送粘贴。可先保存当前复制内容，再复制少量普通文本后重新求助"
+    case .promisedData:
+        "剪贴板含无法可靠恢复的延迟文件数据；未发送粘贴。可先完成当前复制操作，再复制普通文本后重新求助"
+    case .itemLimit, .typeLimit, .emptyTypes, .itemsUnavailable, .dataUnavailable:
+        "无法完整备份当前剪贴板；未发送粘贴。可先保存当前复制内容，再复制普通文本后重新求助"
+    case .payloadUnavailable, .writeFailed:
+        "临时写入剪贴板失败；未发送粘贴。请稍后重新求助"
+    case nil:
+        "剪贴板暂不可用；未发送粘贴。请稍后重新求助"
+    }
 }
 
 func diagnosticAdviceOutcome(_ advice: SentenceAdvice) -> DiagnosticOutcome {

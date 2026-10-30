@@ -25,6 +25,13 @@ private struct TestWritingExplainer: WritingExplaining {
     }
 }
 final class AppDiagnosticsTests: XCTestCase {
+    func testClipboardGuidanceSeparatesBackupRefusalFromTemporaryWriteFailure() {
+        XCTAssertTrue(clipboardRefusalMessage(.byteLimit).contains("大小上限"))
+        XCTAssertTrue(clipboardRefusalMessage(.promisedData).contains("延迟文件"))
+        XCTAssertTrue(clipboardRefusalMessage(.dataUnavailable).contains("备份"))
+        XCTAssertTrue(clipboardRefusalMessage(.writeFailed).contains("写入剪贴板失败"))
+        XCTAssertFalse(clipboardRefusalMessage(.writeFailed).contains("普通文本"))
+    }
     @MainActor func testChannelPreferencesAreIndependentAndDoNotTouchAPISettings() async throws {
         let suite = "lingomend-diagnostics-test-\(UUID())"
         let defaults = UserDefaults(suiteName: suite)!

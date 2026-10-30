@@ -68,6 +68,29 @@ public final class MacOSReadingSelectionReader {
         let result = try capture(); succeeded = true; return result
     }
 
+    /// Codex can publish its selection tree after the shortcut's initial read.
+    /// One settling attempt stays bound to the original front process/window.
+    public func captureAfterSettling(diagnostics: any DiagnosticRecording, operation: UUID) async throws -> ReadingCapture {
+        let app = NSWorkspace.shared.frontmostApplication
+        let window = app.flatMap {
+            element(attribute(AXUIElementCreateApplication($0.processIdentifier), kAXFocusedWindowAttribute))
+        }
+        return try await CaptureSettling.run(sameSource: {
+            guard let app, let window,
+                  NSWorkspace.shared.frontmostApplication?.processIdentifier == app.processIdentifier,
+                  let current = self.element(self.attribute(AXUIElementCreateApplication(app.processIdentifier),
+                      kAXFocusedWindowAttribute)) else { return false }
+            return CFEqual(window, current)
+        }, retrying: { error in
+            app?.bundleIdentifier == "com.openai.codex" && window != nil
+                && (error == .selectionUnavailable || error == .focusedElementUnavailable)
+        }, onRetry: { error in
+            diagnostics.record(DiagnosticEvent(.captureSettling, reason: error.diagnosticReason,
+                stage: .capture, shortcut: .read, count: 1,
+                applicationIdentifier: app?.bundleIdentifier, applicationName: app?.localizedName), operation: operation)
+        }, attempt: { try self.capture(diagnostics: diagnostics, operation: operation) })
+    }
+
     public func capture() throws -> ReadingCapture {
         clear()
         guard AXIsProcessTrusted() else { throw AccessibilityCaptureError.permissionRequired }
@@ -139,16 +162,44 @@ public final class MacOSReadingSelectionReader {
         changeReason(for: capture) == nil
     }
 
-    public func changeReason(for capture: ReadingCapture) -> DiagnosticReason? {
-        guard let source, source.capture.id == capture.id else { return .sourceReadFailed }
+    public func changeReason(for capture: ReadingCapture, diagnostics: (any DiagnosticRecording)? = nil,
+                             operation: UUID? = nil) -> DiagnosticReason? {
+        let previousProbe = probe
+        let collector = diagnostics == nil ? nil : AXCaptureProbe()
+        if let collector { probe = collector }
+        defer { probe = previousProbe }
+        let reason: DiagnosticReason?
+        let detail: DiagnosticReason?
+        do {
+            reason = try recheck(capture)
+            detail = reason
+        } catch {
+            reason = .sourceReadFailed
+            detail = (error as? AccessibilityCaptureError)?.diagnosticReason ?? .captureUnavailable
+        }
+        if let detail {
+            diagnostics?.record(DiagnosticEvent(.sourceRechecked, outcome: .refused,
+                reason: detail, stage: .revalidation, shortcut: .read,
+                applicationIdentifier: capture.applicationIdentifier,
+                capture: collector?.summary()), operation: operation)
+        }
+        return reason
+    }
+
+    private func recheck(_ capture: ReadingCapture) throws -> DiagnosticReason? {
+        guard let source, source.capture.id == capture.id else { return .sourceUnavailable }
+        guard AXIsProcessTrusted() else { throw AccessibilityCaptureError.permissionRequired }
         guard NSWorkspace.shared.frontmostApplication?.processIdentifier == source.pid else { return .focusChanged }
         let app = AXUIElementCreateApplication(source.pid)
         let focus = focusedElement(app)
-        guard sameValue(focus, source.focus),
-              let window = element(attribute(app, kAXFocusedWindowAttribute)),
-              CFEqual(window, source.window) else { return .focusChanged }
-        guard let fresh = try? read(source.element, identifier: capture.applicationIdentifier,
-            focus: focus, window: window, pid: source.pid) else { return .sourceReadFailed }
+        if focus == nil, source.focus != nil { throw AccessibilityCaptureError.focusedElementUnavailable }
+        guard sameValue(focus, source.focus) else { return .focusChanged }
+        guard let window = element(attribute(app, kAXFocusedWindowAttribute)) else {
+            throw AccessibilityCaptureError.focusedWindowUnavailable
+        }
+        guard CFEqual(window, source.window) else { return .focusChanged }
+        guard let fresh = try read(source.element, identifier: capture.applicationIdentifier,
+            focus: focus, window: window, pid: source.pid) else { throw AccessibilityCaptureError.selectionUnavailable }
         // Opaque marker objects can be regenerated without a changed numerical
         // range. Compare verified indices when available; opaque-only captures
         // still require stable marker identity to disambiguate repeated text.
