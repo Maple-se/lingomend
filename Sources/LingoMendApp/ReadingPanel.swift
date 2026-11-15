@@ -7,11 +7,36 @@ private final class NonActivatingReadingPanel: NSPanel {
     override var canBecomeMain: Bool { false }
 }
 
+enum ReadingCardPresentationState: Equatable {
+    case hidden
+    case shownAutomatically
+    case shownManually
+    case dragging
+    case pinned
+    case draggingPinned
+}
+
+enum ReadingCardLayout {
+    static let baseHeaderHeight: CGFloat = 56
+    static let maximumHeaderHeight: CGFloat = 64
+    static let minimumControlHeight: CGFloat = 44
+
+    static var headerHeight: CGFloat {
+        let headlineSize = NSFont.preferredFont(forTextStyle: .headline).pointSize
+        return min(maximumHeaderHeight, max(baseHeaderHeight, ceil(headlineSize + 28)))
+    }
+}
+
 /// A reading surface, deliberately without any edit or accept action.
 @MainActor
 final class ReadingPanel {
     private var panel: NSPanel?
-    func hide() { panel?.orderOut(nil) }
+    private(set) var state: ReadingCardPresentationState = .hidden
+
+    func hide() {
+        panel?.orderOut(nil)
+        state = .hidden
+    }
 
     func show(request: ReadingRequest, explanation: ReadingExplanation, anchor: CGRect?,
               onDismiss: @escaping @MainActor () -> Void) {
@@ -24,7 +49,9 @@ final class ReadingPanel {
         panel.level = .floating; panel.isFloatingPanel = true; panel.hidesOnDeactivate = false
         panel.hasShadow = true; panel.isOpaque = false; panel.backgroundColor = .clear
         panel.collectionBehavior = [.moveToActiveSpace, .fullScreenAuxiliary]
-        panel.contentView = NSHostingView(rootView: ReadingView(request: request, explanation: explanation, onDismiss: onDismiss))
+        state = .shownAutomatically
+        panel.contentView = NSHostingView(rootView: ReadingView(request: request, explanation: explanation,
+            onDismiss: onDismiss))
         // Missing AX bounds may use the pointer for a read-only card, never as an edit address.
         panel.setFrame(frame, display: true)
         panel.orderFrontRegardless(); self.panel = panel
@@ -38,13 +65,10 @@ private struct ReadingView: View {
     let explanation: ReadingExplanation
     let onDismiss: () -> Void
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack {
-                Label("语境解释", systemImage: "text.magnifyingglass").font(.headline)
-                Spacer()
-                Button("关闭", action: onDismiss).frame(minWidth: 60, minHeight: 44)
-                    .accessibilityLabel("关闭语境解释")
-            }
+        VStack(alignment: .leading, spacing: 0) {
+            ReadingCardHeader(onDismiss: onDismiss)
+            Divider().opacity(0.65)
+                .accessibilityHidden(true)
             ScrollView {
                 VStack(alignment: .leading, spacing: 12) {
                     section("选中内容", text: request.selection)
@@ -64,6 +88,7 @@ private struct ReadingView: View {
                 }.frame(maxWidth: .infinity, alignment: .leading)
             }
             Text("只读 · Esc / ⌃⌥. 收起").font(.caption).foregroundStyle(.secondary)
+                .padding(.top, 10)
         }.padding(16).frame(maxWidth: .infinity, maxHeight: .infinity)
             .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 16))
             .overlay(RoundedRectangle(cornerRadius: 16).stroke(.primary.opacity(0.15)))
@@ -75,5 +100,25 @@ private struct ReadingView: View {
             Text(text).font(.body).textSelection(.enabled)
                 .fixedSize(horizontal: false, vertical: true)
         }
+    }
+}
+
+private struct ReadingCardHeader: View {
+    let onDismiss: () -> Void
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Label("语境解释", systemImage: "text.magnifyingglass")
+                .font(.headline)
+                .accessibilityAddTraits(.isHeader)
+            Spacer(minLength: 8)
+            Button("关闭", action: onDismiss)
+                .frame(minWidth: 60, minHeight: ReadingCardLayout.minimumControlHeight)
+                .accessibilityLabel("关闭语境解释")
+        }
+        .frame(maxWidth: .infinity, minHeight: ReadingCardLayout.headerHeight,
+               maxHeight: ReadingCardLayout.maximumHeaderHeight, alignment: .center)
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("语境解释标题栏")
     }
 }
