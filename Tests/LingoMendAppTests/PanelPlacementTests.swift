@@ -40,4 +40,39 @@ final class PanelPlacementTests: XCTestCase {
         XCTAssertGreaterThan(result.minY, 20)
         XCTAssertLessThanOrEqual(result.maxY, primary.visibleFrame.maxY - 8)
     }
+
+    func testReadingPlacementAvoidsAnchorAndPrefersBelowWhenSpaceAllows() {
+        let anchor = CGRect(x: 700, y: 480, width: 120, height: 24)
+        let result = PanelPlacement.readingFrame(anchor: anchor,
+            preferredSize: NSSize(width: 460, height: 300), fallback: .zero,
+            primaryTop: 1080, displays: [primary])
+        let anchorInAppKit = NSRect(x: anchor.minX, y: 1080 - anchor.maxY,
+            width: anchor.width, height: anchor.height).insetBy(dx: -12, dy: -12)
+        XCTAssertFalse(result.intersects(anchorInAppKit))
+        XCTAssertLessThanOrEqual(result.maxY, anchorInAppKit.minY)
+    }
+
+    func testReadingPlacementUsesAboveWhenAnchorIsNearBottom() {
+        let anchor = CGRect(x: 700, y: 1000, width: 120, height: 24)
+        let result = PanelPlacement.readingFrame(anchor: anchor,
+            preferredSize: NSSize(width: 460, height: 300), fallback: .zero,
+            primaryTop: 1080, displays: [primary])
+        let anchorInAppKit = NSRect(x: anchor.minX, y: 1080 - anchor.maxY,
+            width: anchor.width, height: anchor.height).insetBy(dx: -12, dy: -12)
+        XCTAssertFalse(result.intersects(anchorInAppKit))
+        XCTAssertGreaterThanOrEqual(result.minY, anchorInAppKit.maxY)
+    }
+
+    func testDraggedFrameClampsToVisibleFrameOfPointerDisplay() {
+        let secondary = PanelPlacement.Display(
+            frame: NSRect(x: 1920, y: 0, width: 1440, height: 900),
+            visibleFrame: NSRect(x: 1920, y: 0, width: 1440, height: 878))
+        let proposed = NSRect(x: 3200, y: -120, width: 460, height: 300)
+        let result = PanelPlacement.clampedFrame(proposed,
+            to: [primary, secondary], pointer: NSPoint(x: 3300, y: 20))
+        XCTAssertGreaterThanOrEqual(result.minX, secondary.visibleFrame.minX + 8)
+        XCTAssertLessThanOrEqual(result.maxX, secondary.visibleFrame.maxX - 8)
+        XCTAssertGreaterThanOrEqual(result.minY, secondary.visibleFrame.minY + 8)
+        XCTAssertLessThanOrEqual(result.maxY, secondary.visibleFrame.maxY - 8)
+    }
 }
