@@ -165,7 +165,7 @@ private final class LingoMendDelegate: NSObject, NSApplicationDelegate, NSMenuDe
     }
     private func finishTermination() {
         guard !finishing else { return }
-        finishing = true; invalidate(reason: .userCancelled)
+        finishing = true; invalidate(reason: .userCancelled, closingPinnedReading: true)
         record(DiagnosticEvent(.appStopping))
         // Flush only after acceptance's bounded clipboard cleanup, at most 300 ms more.
         diagnostics.recorder.finish {
@@ -226,8 +226,11 @@ private final class LingoMendDelegate: NSObject, NSApplicationDelegate, NSMenuDe
     }
 
     private func invalidate(reason: DiagnosticReason? = nil, preservingWritingCard: Bool = false,
-                            preservingPinnedReading: Bool = false) {
-        let keepPinnedReading = preservingPinnedReading || preservePinnedReadingDuringRequest
+                            preservingPinnedReading: Bool = false,
+                            closingPinnedReading: Bool = false) {
+        let canPreservePinnedReading = reason != .settingsChanged && reason != .outsideClick
+        let keepPinnedReading = !closingPinnedReading && readingPanel.isPinned && canPreservePinnedReading &&
+            (preservingPinnedReading || preservePinnedReadingDuringRequest)
         if let reason, generation != nil || hasPreview {
             record(DiagnosticEvent(.candidateDismissed, outcome: .cancelled,
                 reason: reason, stage: hasPreview ? .candidate : .model), operation: epoch)
@@ -503,8 +506,12 @@ private final class LingoMendDelegate: NSObject, NSApplicationDelegate, NSMenuDe
                 }
                 hasPreview = true; notice.hide()
                 readingPanel.show(request: request, explanation: explanation, anchor: capture.anchor,
-                    onDismiss: { [weak self] in self?.invalidate(reason: .userCancelled) },
-                    onOutsideClick: { [weak self] in self?.invalidate(reason: .outsideClick) },
+                    onDismiss: { [weak self] in
+                        self?.invalidate(reason: .userCancelled, closingPinnedReading: true)
+                    },
+                    onOutsideClick: { [weak self] in
+                        self?.invalidate(reason: .outsideClick, closingPinnedReading: true)
+                    },
                     onPinChanged: { [weak self] pinned in self?.readingPinChanged(pinned) })
                 preservePinnedReadingDuringRequest = false
                 record(DiagnosticEvent(.readingShown, outcome: .success,
