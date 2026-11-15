@@ -204,7 +204,7 @@ private final class LingoMendDelegate: NSObject, NSApplicationDelegate, NSMenuDe
                 guard let self else { return }
                 let reason = await readingReader.changeReasonAfterSettling(
                     for: reading, diagnostics: diagnostics.recorder, operation: token)
-                guard epoch == token, activeReading?.id == reading.id else { return }
+                guard !Task.isCancelled, epoch == token, activeReading?.id == reading.id else { return }
                 if let reason { discardChangedPreview(reason: reason) }
             }
             return
@@ -231,9 +231,9 @@ private final class LingoMendDelegate: NSObject, NSApplicationDelegate, NSMenuDe
         let canPreservePinnedReading = reason != .settingsChanged && reason != .outsideClick
         let keepPinnedReading = !closingPinnedReading && readingPanel.isPinned && canPreservePinnedReading &&
             (preservingPinnedReading || preservePinnedReadingDuringRequest)
-        if let reason, generation != nil || hasPreview {
+        if let reason, generation != nil || hasPreview || (readingPanel.isPinned && !keepPinnedReading) {
             record(DiagnosticEvent(.candidateDismissed, outcome: .cancelled,
-                reason: reason, stage: hasPreview ? .candidate : .model), operation: epoch)
+                reason: reason, stage: generation != nil && !hasPreview ? .model : .candidate), operation: epoch)
         }
         epoch = UUID(); generation?.cancel(); generation = nil
         observedRevalidation?.cancel(); observedRevalidation = nil
@@ -242,18 +242,21 @@ private final class LingoMendDelegate: NSObject, NSApplicationDelegate, NSMenuDe
         notice.hide()
         activeReading = nil; readingReader.clear()
         if !keepPinnedReading { readingPanel.hide() }
-        unregisterInteractionKeys()
+        unregisterInteractionKeys(keepingCancellation: keepPinnedReading)
         observer.configure(enabled: false, allowedApplications: [])
         activeApplication = nil
         preservePinnedReadingDuringRequest = false
     }
 
-    private func unregisterInteractionKeys() {
-        dismissKey?.unregister(); dismissKey = nil; acceptKey?.unregister(); acceptKey = nil
+    private func unregisterInteractionKeys(keepingCancellation: Bool = false) {
+        acceptKey?.unregister(); acceptKey = nil
+        guard !keepingCancellation else { return }
+        dismissKey?.unregister(); dismissKey = nil
         if let escapeMonitor { NSEvent.removeMonitor(escapeMonitor); self.escapeMonitor = nil }
     }
 
     private func registerCancellation() {
+        guard dismissKey == nil else { return }
         let token = epoch
         let key = GlobalHotKey(keyCode: UInt32(kVK_ANSI_Period), identifier: 4) { [weak self] in self?.invalidate(reason: .userCancelled) }
         dismissKey = key
@@ -262,10 +265,10 @@ private final class LingoMendDelegate: NSObject, NSApplicationDelegate, NSMenuDe
             outcome: registered ? .success : .failed, shortcut: .cancelPeriod), operation: token)
         if !registered { statusLine?.title = "取消快捷键冲突；可点击候选上的取消" }
         // Observe Escape's key code only, without consuming it or reading typed characters.
-        escapeMonitor = NSEvent.addGlobalMonitorForEvents(matching: .keyDown) { [weak self] event in
+        escapeMonitor = NSEvent.addGlobalMonitorForEvents(matching: .keyDown) { [weak self, weak key] event in
             guard event.keyCode == UInt16(kVK_Escape) else { return }
             MainActor.assumeIsolated {
-                guard let self, self.epoch == token else { return }
+                guard let self, let key, self.dismissKey === key else { return }
                 self.invalidate(reason: .userCancelled)
             }
         }
@@ -307,7 +310,8 @@ private final class LingoMendDelegate: NSObject, NSApplicationDelegate, NSMenuDe
                 if self.epoch == token {
                     self.generation = nil
                     if !self.hasPreview {
-                        self.activeSnapshot = nil; self.unregisterInteractionKeys()
+                        self.activeSnapshot = nil
+                        self.unregisterInteractionKeys(keepingCancellation: self.readingPanel.isPinned)
                         self.observer.configure(enabled: false, allowedApplications: [])
                     }
                 }
@@ -452,7 +456,6 @@ private final class LingoMendDelegate: NSObject, NSApplicationDelegate, NSMenuDe
         guard acceptance == nil else { return }
         let keepPinnedReading = readingPanel.isPinned
         invalidate(reason: .superseded, preservingPinnedReading: keepPinnedReading)
-        preservePinnedReadingDuringRequest = keepPinnedReading
         let token = epoch
         let application = NSWorkspace.shared.frontmostApplication
         record(DiagnosticEvent(.readingStarted, shortcut: .read), operation: token, application: application)
@@ -463,6 +466,7 @@ private final class LingoMendDelegate: NSObject, NSApplicationDelegate, NSMenuDe
             feedback("请在设置中允许当前应用，或先在已允许的 TextEdit 中体验",
                 actionTitle: "打开设置", action: { [weak self] in self?.showSettings() }); return
         }
+        preservePinnedReadingDuringRequest = keepPinnedReading
         activeApplication = application
         observer.configure(enabled: true, allowedApplications: [identifier])
         registerCancellation(); statusLine?.title = "正在读取选中词句…"
@@ -474,7 +478,8 @@ private final class LingoMendDelegate: NSObject, NSApplicationDelegate, NSMenuDe
                     generation = nil
                     preservePinnedReadingDuringRequest = false
                     if !hasPreview {
-                        activeReading = nil; readingReader.clear(); unregisterInteractionKeys()
+                        activeReading = nil; readingReader.clear()
+                        unregisterInteractionKeys(keepingCancellation: readingPanel.isPinned)
                         observer.configure(enabled: false, allowedApplications: [])
                     }
                 }
@@ -500,8 +505,11 @@ private final class LingoMendDelegate: NSObject, NSApplicationDelegate, NSMenuDe
                 try Task.checkCancellation()
                 guard epoch == token else { return }
                 stage = .candidate
-                if let reason = await readingReader.changeReasonAfterSettling(
-                    for: capture, diagnostics: diagnostics.recorder, operation: token) {
+                let reason = await readingReader.changeReasonAfterSettling(
+                    for: capture, diagnostics: diagnostics.recorder, operation: token)
+                try Task.checkCancellation()
+                guard epoch == token else { return }
+                if let reason {
                     discardChangedPreview(reason: reason); return
                 }
                 hasPreview = true; notice.hide()
