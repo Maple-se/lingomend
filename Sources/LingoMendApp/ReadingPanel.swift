@@ -20,6 +20,7 @@ enum ReadingCardLayout {
     static let baseHeaderHeight: CGFloat = 56
     static let maximumHeaderHeight: CGFloat = 64
     static let minimumControlHeight: CGFloat = 44
+    static let minimumPanelSize = NSSize(width: 280, height: 180)
 
     static var headerHeight: CGFloat {
         let headlineSize = NSFont.preferredFont(forTextStyle: .headline).pointSize
@@ -62,15 +63,16 @@ final class ReadingPanel {
     func show(request: ReadingRequest, explanation: ReadingExplanation, anchor: CGRect?,
               onDismiss: @escaping @MainActor () -> Void,
               onOutsideClick: @escaping @MainActor () -> Void,
-              onPinChanged: @escaping @MainActor (Bool) -> Void) {
+              onPinChanged: @escaping @MainActor (Bool) -> Void) -> Bool {
         let visibleText = request.selection.count + explanation.meaning.count + explanation.contextMeaning.count
             + explanation.usage.count
         let height = min(480, max(330, 270 + CGFloat((visibleText + 49) / 50) * 20))
-        let screens = NSScreen.screens
-        let frame = PanelPlacement.readingFrame(anchor: anchor,
+        let displays = PanelPlacement.connectedDisplays
+        // Without AX bounds the pointer provides a placement reference for this read-only card.
+        guard let frame = PanelPlacement.readingFrame(anchor: anchor,
             preferredSize: NSSize(width: 460, height: height),
-            primaryTop: screens.first?.frame.maxY ?? 0,
-            displays: screens.map { PanelPlacement.Display(frame: $0.frame, visibleFrame: $0.visibleFrame) })
+            primaryTop: displays.first?.frame.maxY ?? 0,
+            displays: displays) else { return false }
         let panel = self.panel ?? NonActivatingReadingPanel(contentRect: frame,
             styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
         panel.level = .floating; panel.isFloatingPanel = true; panel.hidesOnDeactivate = false
@@ -79,11 +81,12 @@ final class ReadingPanel {
         state = .shownAutomatically
         isPinned = false
         model.isPinned = false
-        panel.contentView = NSHostingView(rootView: ReadingView(request: request, explanation: explanation,
+        let content = NSHostingView(rootView: ReadingView(request: request, explanation: explanation,
             model: model, onDismiss: onDismiss,
             onPinToggle: { [weak self] in self?.togglePin() },
             onDragEvent: { [weak self] event in self?.handleDragEvent(event) }))
-        // Missing AX bounds may use the pointer for a read-only card, never as an edit address.
+        content.sizingOptions = []
+        panel.contentView = content
         panel.setFrame(frame, display: true)
         panel.orderFrontRegardless(); self.panel = panel
         outsideClickHandler = onOutsideClick
@@ -91,6 +94,13 @@ final class ReadingPanel {
         installClickMonitors()
         NSAccessibility.post(element: panel, notification: .announcementRequested,
                              userInfo: [.announcement: "语境解释已显示，只读。"])
+        return true
+    }
+
+    func keepOnScreen() {
+        guard let panel, panel.isVisible else { return }
+        let frame = PanelPlacement.clampedFrame(panel.frame, to: PanelPlacement.connectedDisplays)
+        if frame != panel.frame { panel.setFrame(frame, display: true) }
     }
 
     private func installClickMonitors() {

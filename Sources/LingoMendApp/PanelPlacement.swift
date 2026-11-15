@@ -8,6 +8,10 @@ enum PanelPlacement {
         let visibleFrame: NSRect
     }
 
+    static var connectedDisplays: [Display] {
+        NSScreen.screens.map { Display(frame: $0.frame, visibleFrame: $0.visibleFrame) }
+    }
+
     static func frame(anchor: CGRect?, preferredSize: NSSize, fallback: NSPoint = NSEvent.mouseLocation) -> NSRect {
         let screens = NSScreen.screens
         return frame(anchor: anchor, preferredSize: preferredSize, fallback: fallback,
@@ -42,82 +46,70 @@ enum PanelPlacement {
     static func readingFrame(anchor: CGRect?, preferredSize: NSSize,
                              fallback: NSPoint = NSEvent.mouseLocation,
                              primaryTop: CGFloat,
-                             displays: [Display],
-                             edgeInset: CGFloat = 8,
-                             anchorInset: CGFloat = 12,
-                             gap: CGFloat = 12) -> NSRect {
-        guard let anchor else {
-            return frame(anchor: nil, preferredSize: preferredSize, fallback: fallback,
-                primaryTop: primaryTop, displays: displays)
-        }
-        let target = NSRect(x: anchor.minX, y: primaryTop - anchor.maxY,
-            width: max(anchor.width, 1), height: max(anchor.height, 1))
-        guard let display = display(containing: target, in: displays) else {
-            return frame(anchor: anchor, preferredSize: preferredSize, fallback: fallback,
-                primaryTop: primaryTop, displays: displays)
-        }
-        let area = display.visibleFrame.insetBy(dx: edgeInset, dy: edgeInset)
-        let size = constrainedSize(preferredSize, in: area)
-        let protectedAnchor = target.insetBy(dx: -anchorInset, dy: -anchorInset)
-        let candidates: [(NSRect, Int)] = [
-            (NSRect(x: target.minX, y: target.minY - size.height - gap,
-                width: size.width, height: size.height), 4),
-            (NSRect(x: target.minX, y: target.maxY + gap,
-                width: size.width, height: size.height), 3),
-            (NSRect(x: target.maxX + gap, y: target.midY - size.height / 2,
-                width: size.width, height: size.height), 2),
-            (NSRect(x: target.minX - size.width - gap, y: target.midY - size.height / 2,
-                width: size.width, height: size.height), 1)
+                             displays: [Display]) -> NSRect? {
+        let target = anchor.map {
+            NSRect(x: $0.minX, y: primaryTop - $0.maxY,
+                width: max($0.width, 1), height: max($0.height, 1))
+        } ?? NSRect(origin: fallback, size: NSSize(width: 1, height: 1))
+        guard let display = display(containing: target, in: displays) else { return nil }
+        let area = display.visibleFrame.insetBy(dx: 12, dy: 12)
+        let protected = target.insetBy(dx: -12, dy: -12)
+        let sides: [(edge: CGRectEdge, space: CGFloat)] = [
+            (.minYEdge, protected.minY - area.minY),
+            (.maxYEdge, area.maxY - protected.maxY),
+            (.maxXEdge, area.maxX - protected.maxX),
+            (.minXEdge, protected.minX - area.minX)
         ]
-        let viable = candidates.filter { candidate, _ in
-            area.contains(candidate) && !candidate.intersects(protectedAnchor)
+        // Each strip lies wholly outside the padded selection. Fit along the
+        // edge first, reducing dimensions only when no full-size card fits.
+        let candidates = sides.enumerated().compactMap { index, side -> (frame: NSRect, score: CGFloat)? in
+            guard side.space > 0 else { return nil }
+            let acrossWidth = side.edge == .minXEdge || side.edge == .maxXEdge
+            let limit = acrossWidth ? area.width : area.height
+            let strip = area.divided(atDistance: min(limit, side.space), from: side.edge).slice
+            let size = NSSize(width: min(preferredSize.width, strip.width),
+                              height: min(preferredSize.height, strip.height))
+            let minimumSize = ReadingCardLayout.minimumPanelSize
+            guard size.width >= minimumSize.width, size.height >= minimumSize.height else { return nil }
+            let x = switch side.edge {
+            case .minXEdge: strip.maxX - size.width
+            case .maxXEdge: strip.minX
+            default: min(max(target.minX, strip.minX), strip.maxX - size.width)
+            }
+            let y = switch side.edge {
+            case .minYEdge: strip.maxY - size.height
+            case .maxYEdge: strip.minY
+            default: min(max(target.midY - size.height / 2, strip.minY), strip.maxY - size.height)
+            }
+            let frame = NSRect(origin: NSPoint(x: x, y: y), size: size)
+            return (frame, candidateScore(frame, sideRank: sides.count - index, anchor: target))
         }
-        if let best = viable.max(by: { lhs, rhs in
-            candidateScore(lhs.0, sideRank: lhs.1, anchor: target) <
-                candidateScore(rhs.0, sideRank: rhs.1, anchor: target)
-        }) {
-            return best.0
-        }
-
-        // A very large card may leave no complete candidate. Keep the old
-        // edge-safe placement as a bounded fallback and let the content scroll.
-        return frame(anchor: anchor, preferredSize: preferredSize, fallback: fallback,
-            primaryTop: primaryTop, displays: displays)
+        return candidates.max {
+            let leftArea = $0.frame.width * $0.frame.height
+            let rightArea = $1.frame.width * $1.frame.height
+            return leftArea == rightArea ? $0.score < $1.score : leftArea < rightArea
+        }?.frame
     }
 
     static func clampedFrame(_ frame: NSRect, to displays: [Display],
-                             pointer: NSPoint? = nil, edgeInset: CGFloat = 8) -> NSRect {
-        guard let display = display(containing: frame, pointer: pointer, in: displays) else {
-            return frame
-        }
-        let area = display.visibleFrame.insetBy(dx: edgeInset, dy: edgeInset)
+                             pointer: NSPoint? = nil) -> NSRect {
+        let pointerDisplay = pointer.flatMap { point in displays.first { $0.frame.contains(point) } }
+        guard let display = pointerDisplay ?? display(containing: frame, in: displays) else { return frame }
+        let area = display.visibleFrame.insetBy(dx: 12, dy: 12)
         let width = min(frame.width, area.width)
         let height = min(frame.height, area.height)
         let x = min(max(frame.minX, area.minX), area.maxX - width)
-        let y = min(max(frame.minY, area.minY), area.maxY - height)
+        let y = min(max(frame.maxY - height, area.minY), area.maxY - height)
         return NSRect(x: x, y: y, width: width, height: height)
     }
 
-    private static func constrainedSize(_ size: NSSize, in area: NSRect) -> NSSize {
-        NSSize(width: min(size.width, area.width), height: min(size.height, area.height))
-    }
-
     private static func display(containing target: NSRect, in displays: [Display]) -> Display? {
-        display(containing: target, pointer: nil, in: displays)
-    }
-
-    private static func display(containing target: NSRect, pointer: NSPoint?, in displays: [Display]) -> Display? {
         displays.max { lhs, rhs in
             let lhsArea = lhs.frame.intersection(target)
             let rhsArea = rhs.frame.intersection(target)
             let leftArea = lhsArea.width * lhsArea.height
             let rightArea = rhsArea.width * rhsArea.height
             if leftArea != rightArea { return leftArea < rightArea }
-            if let pointer {
-                let leftDistance = distanceSquared(from: pointer, to: lhs.frame)
-                let rightDistance = distanceSquared(from: pointer, to: rhs.frame)
-                if leftDistance != rightDistance { return leftDistance > rightDistance }
-            }
             return distanceSquared(from: target.origin, to: lhs.frame) >
                 distanceSquared(from: target.origin, to: rhs.frame)
         }

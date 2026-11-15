@@ -129,6 +129,10 @@ private final class LingoMendDelegate: NSObject, NSApplicationDelegate, NSMenuDe
 
     func menuWillOpen(_ menu: NSMenu) { refreshMenu() }
 
+    func applicationDidChangeScreenParameters(_ notification: Notification) {
+        readingPanel.keepOnScreen()
+    }
+
     private func refreshMenu() {
         modeLine?.title = preferences.networkEnabled ? "状态：模型服务已开启" : "状态：本地固定样例"
         helpKeyLine?.title = triggerRegistered ? "⌃⌥L  写作帮助" : "⌃⌥L  注册失败，请检查快捷键冲突"
@@ -512,15 +516,20 @@ private final class LingoMendDelegate: NSObject, NSApplicationDelegate, NSMenuDe
                 if let reason {
                     discardChangedPreview(reason: reason); return
                 }
-                hasPreview = true; notice.hide()
-                readingPanel.show(request: request, explanation: explanation, anchor: capture.anchor,
+                guard readingPanel.show(request: request, explanation: explanation, anchor: capture.anchor,
                     onDismiss: { [weak self] in
                         self?.invalidate(reason: .userCancelled, closingPinnedReading: true)
                     },
                     onOutsideClick: { [weak self] in
                         self?.invalidate(reason: .outsideClick, closingPinnedReading: true)
                     },
-                    onPinChanged: { [weak self] pinned in self?.readingPinChanged(pinned) })
+                    onPinChanged: { [weak self] pinned in self?.readingPinChanged(pinned) }) else {
+                    record(DiagnosticEvent(.readingFailed, outcome: .refused,
+                        reason: .anchorUnavailable, stage: .candidate, shortcut: .read), operation: token)
+                    feedback("当前屏幕没有足够空间显示语境解释；请缩小选区或移动窗口后重试")
+                    return
+                }
+                hasPreview = true; notice.hide()
                 preservePinnedReadingDuringRequest = false
                 record(DiagnosticEvent(.readingShown, outcome: .success,
                     stage: .candidate, scope: scope, shortcut: .read), operation: token)

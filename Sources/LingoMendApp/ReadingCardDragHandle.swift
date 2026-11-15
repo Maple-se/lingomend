@@ -19,7 +19,7 @@ final class ReadingCardDragHandleView: NSView {
     var onEvent: ((ReadingCardDragEvent) -> Void)?
 
     private var startMouseLocation: NSPoint?
-    private var startWindowOrigin: NSPoint?
+    private var startWindowFrame: NSRect?
     private var hasMoved = false
 
     override var acceptsFirstResponder: Bool { false }
@@ -28,12 +28,12 @@ final class ReadingCardDragHandleView: NSView {
     override func mouseDown(with event: NSEvent) {
         guard let window else { return }
         startMouseLocation = NSEvent.mouseLocation
-        startWindowOrigin = window.frame.origin
+        startWindowFrame = window.frame
         hasMoved = false
     }
 
     override func mouseDragged(with event: NSEvent) {
-        guard let window, let startMouseLocation, let startWindowOrigin else { return }
+        guard let window, let startMouseLocation, let startWindowFrame else { return }
         let current = NSEvent.mouseLocation
         let delta = NSPoint(x: current.x - startMouseLocation.x,
                             y: current.y - startMouseLocation.y)
@@ -42,20 +42,19 @@ final class ReadingCardDragHandleView: NSView {
             hasMoved = true
             onEvent?(.began)
         }
-        let proposed = NSRect(origin: NSPoint(x: startWindowOrigin.x + delta.x,
-                                               y: startWindowOrigin.y + delta.y),
-                               size: window.frame.size)
-        let screens = NSScreen.screens.map {
-            PanelPlacement.Display(frame: $0.frame, visibleFrame: $0.visibleFrame)
+        let proposed = startWindowFrame.offsetBy(dx: delta.x, dy: delta.y)
+        let constrained = PanelPlacement.clampedFrame(proposed, to: PanelPlacement.connectedDisplays, pointer: current)
+        if constrained.size == window.frame.size {
+            window.setFrameOrigin(constrained.origin)
+        } else {
+            window.setFrame(constrained, display: true)
         }
-        let constrained = PanelPlacement.clampedFrame(proposed, to: screens, pointer: current)
-        window.setFrameOrigin(constrained.origin)
     }
 
     override func mouseUp(with event: NSEvent) {
         if hasMoved { onEvent?(.ended) }
         startMouseLocation = nil
-        startWindowOrigin = nil
+        startWindowFrame = nil
         hasMoved = false
     }
 }
