@@ -55,6 +55,7 @@ private final class LingoMendDelegate: NSObject, NSApplicationDelegate, NSMenuDe
     private var activeApplication: NSRunningApplication?
     private var observedRevalidation: Task<Void, Never>?
     private var acceptance: Task<Void, Never>?
+    private var preservePinnedReadingDuringRequest = false
     private var quitAfterAcceptance = false
     private var finishing = false
 
@@ -224,7 +225,9 @@ private final class LingoMendDelegate: NSObject, NSApplicationDelegate, NSMenuDe
             : "文本、选区或焦点已变化；可重新按快捷键求助"
     }
 
-    private func invalidate(reason: DiagnosticReason? = nil, preservingWritingCard: Bool = false) {
+    private func invalidate(reason: DiagnosticReason? = nil, preservingWritingCard: Bool = false,
+                            preservingPinnedReading: Bool = false) {
+        let keepPinnedReading = preservingPinnedReading || preservePinnedReadingDuringRequest
         if let reason, generation != nil || hasPreview {
             record(DiagnosticEvent(.candidateDismissed, outcome: .cancelled,
                 reason: reason, stage: hasPreview ? .candidate : .model), operation: epoch)
@@ -234,10 +237,12 @@ private final class LingoMendDelegate: NSObject, NSApplicationDelegate, NSMenuDe
         hasPreview = false; proposal = nil; activeExplanation = nil; activeSnapshot = nil
         if !preservingWritingCard { panel.hide() }
         notice.hide()
-        activeReading = nil; readingReader.clear(); readingPanel.hide()
+        activeReading = nil; readingReader.clear()
+        if !keepPinnedReading { readingPanel.hide() }
         unregisterInteractionKeys()
         observer.configure(enabled: false, allowedApplications: [])
         activeApplication = nil
+        preservePinnedReadingDuringRequest = false
     }
 
     private func unregisterInteractionKeys() {
@@ -442,7 +447,9 @@ private final class LingoMendDelegate: NSObject, NSApplicationDelegate, NSMenuDe
 
     private func requestReading() {
         guard acceptance == nil else { return }
-        invalidate(reason: .superseded)
+        let keepPinnedReading = readingPanel.isPinned
+        invalidate(reason: .superseded, preservingPinnedReading: keepPinnedReading)
+        preservePinnedReadingDuringRequest = keepPinnedReading
         let token = epoch
         let application = NSWorkspace.shared.frontmostApplication
         record(DiagnosticEvent(.readingStarted, shortcut: .read), operation: token, application: application)
@@ -462,6 +469,7 @@ private final class LingoMendDelegate: NSObject, NSApplicationDelegate, NSMenuDe
             defer {
                 if epoch == token {
                     generation = nil
+                    preservePinnedReadingDuringRequest = false
                     if !hasPreview {
                         activeReading = nil; readingReader.clear(); unregisterInteractionKeys()
                         observer.configure(enabled: false, allowedApplications: [])
@@ -496,7 +504,9 @@ private final class LingoMendDelegate: NSObject, NSApplicationDelegate, NSMenuDe
                 hasPreview = true; notice.hide()
                 readingPanel.show(request: request, explanation: explanation, anchor: capture.anchor,
                     onDismiss: { [weak self] in self?.invalidate(reason: .userCancelled) },
-                    onOutsideClick: { [weak self] in self?.invalidate(reason: .outsideClick) })
+                    onOutsideClick: { [weak self] in self?.invalidate(reason: .outsideClick) },
+                    onPinChanged: { [weak self] pinned in self?.readingPinChanged(pinned) })
+                preservePinnedReadingDuringRequest = false
                 record(DiagnosticEvent(.readingShown, outcome: .success,
                     stage: .candidate, scope: scope, shortcut: .read), operation: token)
                 statusLine?.title = "语境解释已显示 · 不修改原文"
@@ -523,6 +533,15 @@ private final class LingoMendDelegate: NSObject, NSApplicationDelegate, NSMenuDe
                 }
             }
         }
+    }
+
+    private func readingPinChanged(_ pinned: Bool) {
+        guard pinned else { return }
+        observedRevalidation?.cancel()
+        observedRevalidation = nil
+        activeReading = nil
+        readingReader.clear()
+        observer.configure(enabled: false, allowedApplications: [])
     }
 
     private func accept() {

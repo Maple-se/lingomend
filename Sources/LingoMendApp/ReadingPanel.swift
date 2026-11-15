@@ -32,27 +32,37 @@ enum ReadingCardDragEvent {
     case ended
 }
 
+@MainActor
+private final class ReadingCardModel: ObservableObject {
+    @Published var isPinned = false
+}
+
 /// A reading surface, deliberately without any edit or accept action.
 @MainActor
 final class ReadingPanel {
     private var panel: NSPanel?
+    private let model = ReadingCardModel()
     private var globalClickMonitor: Any?
     private var localClickMonitor: Any?
     private var outsideClickHandler: (@MainActor () -> Void)?
-    private var isPinned = false
+    private var onPinChanged: (@MainActor (Bool) -> Void)?
+    private(set) var isPinned = false
     private(set) var state: ReadingCardPresentationState = .hidden
 
     func hide() {
         removeClickMonitors()
         panel?.orderOut(nil)
         outsideClickHandler = nil
+        onPinChanged = nil
         isPinned = false
+        model.isPinned = false
         state = .hidden
     }
 
     func show(request: ReadingRequest, explanation: ReadingExplanation, anchor: CGRect?,
               onDismiss: @escaping @MainActor () -> Void,
-              onOutsideClick: @escaping @MainActor () -> Void) {
+              onOutsideClick: @escaping @MainActor () -> Void,
+              onPinChanged: @escaping @MainActor (Bool) -> Void) {
         let visibleText = request.selection.count + explanation.meaning.count + explanation.contextMeaning.count
             + explanation.usage.count
         let height = min(480, max(330, 270 + CGFloat((visibleText + 49) / 50) * 20))
@@ -67,12 +77,17 @@ final class ReadingPanel {
         panel.hasShadow = true; panel.isOpaque = false; panel.backgroundColor = .clear
         panel.collectionBehavior = [.moveToActiveSpace, .fullScreenAuxiliary]
         state = .shownAutomatically
+        isPinned = false
+        model.isPinned = false
         panel.contentView = NSHostingView(rootView: ReadingView(request: request, explanation: explanation,
-            onDismiss: onDismiss, onDragEvent: { [weak self] event in self?.handleDragEvent(event) }))
+            model: model, onDismiss: onDismiss,
+            onPinToggle: { [weak self] in self?.togglePin() },
+            onDragEvent: { [weak self] event in self?.handleDragEvent(event) }))
         // Missing AX bounds may use the pointer for a read-only card, never as an edit address.
         panel.setFrame(frame, display: true)
         panel.orderFrontRegardless(); self.panel = panel
         outsideClickHandler = onOutsideClick
+        self.onPinChanged = onPinChanged
         installClickMonitors()
         NSAccessibility.post(element: panel, notification: .announcementRequested,
                              userInfo: [.announcement: "语境解释已显示，只读。"])
@@ -113,21 +128,46 @@ final class ReadingPanel {
     private func handleDragEvent(_ event: ReadingCardDragEvent) {
         switch event {
         case .began:
-            if state == .shownAutomatically || state == .shownManually { state = .dragging }
+            if isPinned {
+                if state == .pinned { state = .draggingPinned }
+            } else if state == .shownAutomatically || state == .shownManually {
+                state = .dragging
+            }
         case .ended:
-            if state == .dragging { state = .shownManually }
+            if isPinned {
+                if state == .draggingPinned { state = .pinned }
+            } else if state == .dragging {
+                state = .shownManually
+            }
         }
+    }
+
+    func togglePin() {
+        guard let panel, panel.isVisible else { return }
+        isPinned.toggle()
+        model.isPinned = isPinned
+        if isPinned {
+            state = .pinned
+            panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
+        } else {
+            state = .shownManually
+            panel.collectionBehavior = [.moveToActiveSpace, .fullScreenAuxiliary]
+        }
+        onPinChanged?(isPinned)
     }
 }
 
 private struct ReadingView: View {
     let request: ReadingRequest
     let explanation: ReadingExplanation
+    @ObservedObject var model: ReadingCardModel
     let onDismiss: () -> Void
+    let onPinToggle: () -> Void
     let onDragEvent: (ReadingCardDragEvent) -> Void
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            ReadingCardHeader(onDismiss: onDismiss, onDragEvent: onDragEvent)
+            ReadingCardHeader(isPinned: model.isPinned, onDismiss: onDismiss,
+                onPinToggle: onPinToggle, onDragEvent: onDragEvent)
             Divider().opacity(0.65)
                 .accessibilityHidden(true)
             ScrollView {
@@ -165,7 +205,9 @@ private struct ReadingView: View {
 }
 
 private struct ReadingCardHeader: View {
+    let isPinned: Bool
     let onDismiss: () -> Void
+    let onPinToggle: () -> Void
     let onDragEvent: (ReadingCardDragEvent) -> Void
 
     var body: some View {
@@ -176,7 +218,15 @@ private struct ReadingCardHeader: View {
                 Label("语境解释", systemImage: "text.magnifyingglass")
                     .font(.headline)
                     .accessibilityAddTraits(.isHeader)
-                Spacer(minLength: 8)
+                    .allowsHitTesting(false)
+                Spacer(minLength: 8).allowsHitTesting(false)
+                Button(action: onPinToggle) {
+                    Image(systemName: isPinned ? "pin.fill" : "pin")
+                        .frame(width: ReadingCardLayout.minimumControlHeight,
+                               height: ReadingCardLayout.minimumControlHeight)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(isPinned ? "取消固定语境解释" : "固定语境解释")
                 Button("关闭", action: onDismiss)
                     .frame(minWidth: 60, minHeight: ReadingCardLayout.minimumControlHeight)
                     .accessibilityLabel("关闭语境解释")
