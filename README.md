@@ -21,6 +21,9 @@ The current version is specified in [App/Info.plist](App/Info.plist).
   errors; good writing can return unchanged, ambiguity can return clarification.
 - **Control-Option-D**: explain selected English words or sentences using actual captured
   context. Missing/partial context is labelled. Reading never edits the source.
+- Drag the reading card by its title bar, or click the pin to keep the explanation visible
+  while switching apps or desktops. An outside click dismisses an unpinned card. A successful
+  new reading request places its card near the new selection and replaces the previous one.
 - A non-activating card near the captured caret or text shows request progress, then expands
   in place to show the original text, suggestion and differences. It keeps the same attachment
   edge and respects the system Reduce Motion setting. Successful acceptance stays nearby
