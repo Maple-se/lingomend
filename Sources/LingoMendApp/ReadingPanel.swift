@@ -36,15 +36,23 @@ enum ReadingCardDragEvent {
 @MainActor
 final class ReadingPanel {
     private var panel: NSPanel?
+    private var globalClickMonitor: Any?
+    private var localClickMonitor: Any?
+    private var outsideClickHandler: (@MainActor () -> Void)?
+    private var isPinned = false
     private(set) var state: ReadingCardPresentationState = .hidden
 
     func hide() {
+        removeClickMonitors()
         panel?.orderOut(nil)
+        outsideClickHandler = nil
+        isPinned = false
         state = .hidden
     }
 
     func show(request: ReadingRequest, explanation: ReadingExplanation, anchor: CGRect?,
-              onDismiss: @escaping @MainActor () -> Void) {
+              onDismiss: @escaping @MainActor () -> Void,
+              onOutsideClick: @escaping @MainActor () -> Void) {
         let visibleText = request.selection.count + explanation.meaning.count + explanation.contextMeaning.count
             + explanation.usage.count
         let height = min(480, max(330, 270 + CGFloat((visibleText + 49) / 50) * 20))
@@ -64,8 +72,42 @@ final class ReadingPanel {
         // Missing AX bounds may use the pointer for a read-only card, never as an edit address.
         panel.setFrame(frame, display: true)
         panel.orderFrontRegardless(); self.panel = panel
+        outsideClickHandler = onOutsideClick
+        installClickMonitors()
         NSAccessibility.post(element: panel, notification: .announcementRequested,
                              userInfo: [.announcement: "语境解释已显示，只读。"])
+    }
+
+    private func installClickMonitors() {
+        removeClickMonitors()
+        globalClickMonitor = NSEvent.addGlobalMonitorForEvents(matching: .leftMouseDown) {
+            [weak self] _ in
+            MainActor.assumeIsolated { self?.handleOutsideClick(at: NSEvent.mouseLocation) }
+        }
+        localClickMonitor = NSEvent.addLocalMonitorForEvents(matching: .leftMouseDown) {
+            [weak self] event in
+            MainActor.assumeIsolated {
+                self?.handleOutsideClick(at: NSEvent.mouseLocation)
+            }
+            return event
+        }
+    }
+
+    private func removeClickMonitors() {
+        if let globalClickMonitor {
+            NSEvent.removeMonitor(globalClickMonitor)
+            self.globalClickMonitor = nil
+        }
+        if let localClickMonitor {
+            NSEvent.removeMonitor(localClickMonitor)
+            self.localClickMonitor = nil
+        }
+    }
+
+    private func handleOutsideClick(at location: NSPoint) {
+        guard state != .hidden, !isPinned, let panel, panel.isVisible,
+              !panel.frame.contains(location) else { return }
+        outsideClickHandler?()
     }
 
     private func handleDragEvent(_ event: ReadingCardDragEvent) {

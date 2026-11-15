@@ -25,7 +25,7 @@ public enum DiagnosticOutcome: String, Codable, Sendable {
     case restored, superseded, unchanged, suggest, clarify, unsupported
 }
 public enum DiagnosticReason: String, Codable, Sendable {
-    case userCancelled, superseded, sourceOrFocusChanged, settingsChanged
+    case userCancelled, superseded, sourceOrFocusChanged, settingsChanged, outsideClick
     case sourceChanged, selectionChanged, focusChanged, sourceReadFailed, sourceUnavailable
     case permissionRequired, captureUnavailable, applicationNotAllowed, empty, multipleSentences
     case tooLong, invalidRange, unsupportedInput, anchorUnavailable

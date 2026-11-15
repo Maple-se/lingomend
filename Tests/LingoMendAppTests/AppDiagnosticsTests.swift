@@ -25,6 +25,9 @@ private struct TestWritingExplainer: WritingExplaining {
     }
 }
 final class AppDiagnosticsTests: XCTestCase {
+    func testOutsideClickIsAStableDiagnosticReason() {
+        XCTAssertEqual(DiagnosticReason.outsideClick.rawValue, "outsideClick")
+    }
     func testClipboardGuidanceSeparatesBackupRefusalFromTemporaryWriteFailure() {
         XCTAssertTrue(clipboardRefusalMessage(.byteLimit).contains("大小上限"))
         XCTAssertTrue(clipboardRefusalMessage(.promisedData).contains("延迟文件"))

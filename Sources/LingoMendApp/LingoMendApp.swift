@@ -495,7 +495,8 @@ private final class LingoMendDelegate: NSObject, NSApplicationDelegate, NSMenuDe
                 }
                 hasPreview = true; notice.hide()
                 readingPanel.show(request: request, explanation: explanation, anchor: capture.anchor,
-                    onDismiss: { [weak self] in self?.invalidate(reason: .userCancelled) })
+                    onDismiss: { [weak self] in self?.invalidate(reason: .userCancelled) },
+                    onOutsideClick: { [weak self] in self?.invalidate(reason: .outsideClick) })
                 record(DiagnosticEvent(.readingShown, outcome: .success,
                     stage: .candidate, scope: scope, shortcut: .read), operation: token)
                 statusLine?.title = "语境解释已显示 · 不修改原文"
