@@ -56,6 +56,13 @@ struct ReadingExplanationTests {
         let incomplete = DeepSeekReadingProvider(apiKey: "test", transport: ReadingTransport(content: valid, finish: "length"))
         await #expect(throws: CoachingProviderError.incompleteResponse) { try await incomplete.explain(request) }
     }
+
+    @Test func oneJSONFenceIsAcceptedAfterExactKeyValidation() async throws {
+        let request = try ReadingRequest(selection: "current")
+        let fenced = "```json\n{\"meaning\":\"当前的；电流\",\"context_meaning\":\"\",\"usage\":\"\"}\n```"
+        let provider = DeepSeekReadingProvider(apiKey: "test", transport: ReadingTransport(content: fenced))
+        #expect(try await provider.explain(request).meaning == "当前的；电流")
+    }
 }
 
 private struct ReadingTransport: CoachingHTTPTransport {

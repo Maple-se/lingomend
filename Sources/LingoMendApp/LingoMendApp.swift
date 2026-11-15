@@ -53,6 +53,7 @@ private final class LingoMendDelegate: NSObject, NSApplicationDelegate, NSMenuDe
     private var activeSnapshot: TextSnapshot?
     private var activeReading: ReadingCapture?
     private var activeApplication: NSRunningApplication?
+    private var observedRevalidation: Task<Void, Never>?
     private var acceptance: Task<Void, Never>?
     private var quitAfterAcceptance = false
     private var finishing = false
@@ -196,8 +197,15 @@ private final class LingoMendDelegate: NSObject, NSApplicationDelegate, NSMenuDe
 
     private func checkObservedChange() {
         if let reading = activeReading {
-            if let reason = readingReader.changeReason(for: reading, diagnostics: diagnostics.recorder,
-                                                       operation: epoch) { discardChangedPreview(reason: reason) }
+            observedRevalidation?.cancel()
+            let token = epoch
+            observedRevalidation = Task { @MainActor [weak self] in
+                guard let self else { return }
+                let reason = await readingReader.changeReasonAfterSettling(
+                    for: reading, diagnostics: diagnostics.recorder, operation: token)
+                guard epoch == token, activeReading?.id == reading.id else { return }
+                if let reason { discardChangedPreview(reason: reason) }
+            }
             return
         }
         guard let snapshot = activeSnapshot, acceptance == nil else { return }
@@ -222,6 +230,7 @@ private final class LingoMendDelegate: NSObject, NSApplicationDelegate, NSMenuDe
                 reason: reason, stage: hasPreview ? .candidate : .model), operation: epoch)
         }
         epoch = UUID(); generation?.cancel(); generation = nil
+        observedRevalidation?.cancel(); observedRevalidation = nil
         hasPreview = false; proposal = nil; activeExplanation = nil; activeSnapshot = nil
         if !preservingWritingCard { panel.hide() }
         notice.hide()
@@ -480,8 +489,10 @@ private final class LingoMendDelegate: NSObject, NSApplicationDelegate, NSMenuDe
                 try Task.checkCancellation()
                 guard epoch == token else { return }
                 stage = .candidate
-                if let reason = readingReader.changeReason(for: capture, diagnostics: diagnostics.recorder,
-                                                           operation: token) { discardChangedPreview(reason: reason); return }
+                if let reason = await readingReader.changeReasonAfterSettling(
+                    for: capture, diagnostics: diagnostics.recorder, operation: token) {
+                    discardChangedPreview(reason: reason); return
+                }
                 hasPreview = true; notice.hide()
                 readingPanel.show(request: request, explanation: explanation, anchor: capture.anchor,
                     onDismiss: { [weak self] in self?.invalidate(reason: .userCancelled) })

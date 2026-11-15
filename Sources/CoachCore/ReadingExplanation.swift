@@ -74,13 +74,28 @@ public struct DeepSeekReadingProvider: ReadingExplaining {
 
     public func explain(_ input: ReadingRequest) async throws -> ReadingExplanation {
         let data = try await client.content(for: makeRequest(input))
-        guard let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+        let normalized = Self.normalizedJSONData(data)
+        guard let object = try? JSONSerialization.jsonObject(with: normalized) as? [String: Any],
               Set(object.keys) == ["meaning", "context_meaning", "usage"],
-              let result = try? JSONDecoder().decode(ReadingExplanation.self, from: data) else {
+              let result = try? JSONDecoder().decode(ReadingExplanation.self, from: normalized) else {
             throw CoachingProviderError.invalidResponse
         }
         try result.validate(for: input)
         return result
+    }
+
+    /// Some OpenAI-compatible providers still wrap JSON-object output in a single
+    /// Markdown fence. Remove only that outer fence, then keep the exact-key and
+    /// semantic validation above. Extra prose or fields remain rejected.
+    private static func normalizedJSONData(_ data: Data) -> Data {
+        guard let text = String(data: data, encoding: .utf8) else { return data }
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmed.hasPrefix("```") && trimmed.hasSuffix("```") else { return data }
+        var lines = trimmed.components(separatedBy: .newlines)
+        guard lines.count >= 3 else { return data }
+        lines.removeFirst()
+        guard lines.removeLast().trimmingCharacters(in: .whitespacesAndNewlines) == "```" else { return data }
+        return Data(lines.joined(separator: "\n").utf8)
     }
 
     public func makeRequest(_ input: ReadingRequest) throws -> URLRequest {

@@ -45,6 +45,7 @@ public final class MacOSReadingSelectionReader {
         let multipleRanges: CFTypeRef?
         let range: NSRange?
         let rawSelection: String
+        let isPDF: Bool
     }
     private var source: Source?
     private var probe: AXCaptureProbe?
@@ -82,13 +83,27 @@ public final class MacOSReadingSelectionReader {
                       kAXFocusedWindowAttribute)) else { return false }
             return CFEqual(window, current)
         }, retrying: { error in
-            app?.bundleIdentifier == "com.openai.codex" && window != nil
+            ["com.openai.codex", "com.apple.Safari"].contains(app?.bundleIdentifier)
+                && window != nil
                 && (error == .selectionUnavailable || error == .focusedElementUnavailable)
         }, onRetry: { error in
             diagnostics.record(DiagnosticEvent(.captureSettling, reason: error.diagnosticReason,
                 stage: .capture, shortcut: .read, count: 1,
                 applicationIdentifier: app?.bundleIdentifier, applicationName: app?.localizedName), operation: operation)
         }, attempt: { try self.capture(diagnostics: diagnostics, operation: operation) })
+    }
+
+    /// Give marker-backed editors one short settling interval after the model
+    /// returns. The retry remains tied to the same source process and window.
+    public func changeReasonAfterSettling(for capture: ReadingCapture,
+                                          diagnostics: any DiagnosticRecording,
+                                          operation: UUID) async -> DiagnosticReason? {
+        guard !Task.isCancelled else { return nil }
+        let first = changeReason(for: capture, diagnostics: diagnostics, operation: operation)
+        guard first == .selectionUnavailable || first == .sourceReadFailed else { return first }
+        try? await Task.sleep(for: .milliseconds(80))
+        guard !Task.isCancelled else { return nil }
+        return changeReason(for: capture, diagnostics: diagnostics, operation: operation)
     }
 
     public func capture() throws -> ReadingCapture {
@@ -198,16 +213,62 @@ public final class MacOSReadingSelectionReader {
             throw AccessibilityCaptureError.focusedWindowUnavailable
         }
         guard CFEqual(window, source.window) else { return .focusChanged }
-        guard let fresh = try read(source.element, identifier: capture.applicationIdentifier,
-            focus: focus, window: window, pid: source.pid) else { throw AccessibilityCaptureError.selectionUnavailable }
+        if let fresh = try read(source.element, identifier: capture.applicationIdentifier,
+            focus: focus, window: window, pid: source.pid) {
+            return validateFresh(fresh, source: source)
+        }
+
+        // Safari/WebKit and Codex can temporarily stop publishing the current
+        // selection after a model request. The captured marker or character range
+        // remains an address on the same AX object. Re-read only that address and
+        // require the original selected text and context to match.
+        if let restored = try restoreStoredSelection(source) {
+            return restored ? nil : .sourceChanged
+        }
+        throw AccessibilityCaptureError.selectionUnavailable
+    }
+
+    private func validateFresh(_ fresh: Source, source: Source) -> DiagnosticReason? {
         // Opaque marker objects can be regenerated without a changed numerical
-        // range. Compare verified indices when available; opaque-only captures
+        // range. Compare verified indices when available. Opaque-only captures
         // still require stable marker identity to disambiguate repeated text.
         let sameMarker = source.range != nil || sameValue(source.marker, fresh.marker)
         guard fresh.rawSelection == source.rawSelection, fresh.range == source.range,
               sameMarker, sameValue(source.multipleRanges, fresh.multipleRanges)
               else { return .selectionChanged }
-        return fresh.capture.scope == capture.scope ? nil : .sourceChanged
+        return fresh.capture.scope == source.capture.scope ? nil : .sourceChanged
+    }
+
+    private func restoreStoredSelection(_ source: Source) throws -> Bool? {
+        if let marker = source.marker,
+           let selected = textValue(parameter(source.element, "AXStringForTextMarkerRange", marker)),
+           !selected.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            guard selected == source.rawSelection else { return false }
+            if let scope = markerScope(source.element, marker: marker,
+                                       selection: selected, isPDF: source.isPDF) {
+                return scope == source.capture.scope
+            }
+            return source.capture.scope.availability == .selectionOnly
+        }
+
+        guard let range = source.range,
+              let selected = rangeText(source.element, range),
+              selected == source.rawSelection else { return nil }
+        if source.capture.scope.availability == .selectionOnly { return true }
+
+        guard let value = textValue(attribute(source.element, kAXValueAttribute)),
+              value.utf16.count <= 65_536,
+              let scope = try? ReadingScopeResolver().resolve(text: value, selection: range,
+                                                               isPDF: source.isPDF) else { return nil }
+        return scope == source.capture.scope
+    }
+
+    private func rangeText(_ node: AXUIElement, _ range: NSRange) -> String? {
+        guard let argument = rangeArgument(range) else { return nil }
+        if let text = textValue(parameter(node, kAXStringForRangeParameterizedAttribute, argument)) {
+            return text
+        }
+        return textValue(parameter(node, kAXAttributedStringForRangeParameterizedAttribute, argument))
     }
 
     private func focusedElement(_ application: AXUIElement) -> AXUIElement? {
@@ -303,7 +364,8 @@ public final class MacOSReadingSelectionReader {
         }
         let capture = ReadingCapture(id: UUID(), applicationIdentifier: identifier, scope: scope, anchor: anchor)
         return Source(capture: capture, element: node, focus: focus, window: window,
-                      pid: pid, marker: marker, multipleRanges: multipleRanges, range: range, rawSelection: raw)
+                      pid: pid, marker: marker, multipleRanges: multipleRanges, range: range,
+                      rawSelection: raw, isPDF: isPDF)
     }
 
     /// Text markers are opaque. Use the system's marker endpoints and WebKit's advertised
@@ -368,6 +430,12 @@ public final class MacOSReadingSelectionReader {
         default: nil
         }
         return AXEditorAccess.parameter(element, name, argument, probe: probe, api: api)
+    }
+    private func textValue(_ value: CFTypeRef?) -> String? {
+        if let text = value as? String { return text }
+        if let string = value as? NSString { return String(string) }
+        if let attributed = value as? NSAttributedString { return attributed.string }
+        return nil
     }
     private func element(_ value: CFTypeRef?) -> AXUIElement? {
         guard let value, CFGetTypeID(value) == AXUIElementGetTypeID() else { return nil }
