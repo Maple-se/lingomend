@@ -7,10 +7,10 @@ cd "$project_dir"
 # Optimization is independent of distribution defaults. Missing plist metadata is off.
 channel=${1:-development}
 case "$channel" in
-  development) app_dir="$project_dir/.build/LingoMend.app" ;;
-  release) app_dir="$project_dir/.build/LingoMend-Release.app" ;;
+  development|release) ;;
   *) printf '%s\n' 'Usage: sh Scripts/build-local-app.sh [development|release]' >&2; exit 2 ;;
 esac
+app_dir="$project_dir/.build/LingoMend.app"
 
 # The local app is an ad-hoc signed experience package. Disable SwiftPM's
 # subprocess sandbox and omit a dSYM so the script also works in the managed

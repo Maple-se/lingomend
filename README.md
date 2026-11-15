@@ -53,7 +53,10 @@ swift test --disable-sandbox
 sh Scripts/build-local-app.sh development
 ```
 
-Quit the old process from the menu bar and open `.build/LingoMend.app`. In
+Both build channels write to `.build/LingoMend.app`. The build argument sets its
+channel, with `development` as the default. If a previous build left
+`LingoMend-Release.app`, quit that copy from the menu bar and remove the old bundle.
+Quit the running copy from the menu bar and open `.build/LingoMend.app`. In
 **Settings → Access and Apps**, allow TextEdit or enable other-app on-demand access, and
 manually grant Accessibility permission. Rebuilt ad-hoc signed apps may need reauthorization.
 Configure the model under **Model Service**; a connection test sends one synthetic request

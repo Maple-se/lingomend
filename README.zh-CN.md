@@ -34,7 +34,9 @@ swift test --disable-sandbox
 sh Scripts/build-local-app.sh development
 ```
 
-从菜单栏退出旧进程，再打开 `.build/LingoMend.app`。进入 **设置 → 访问与应用**，允许 TextEdit 或开启其他应用的按需求助，并手动授予 macOS 辅助功能权限。重新构建的临时签名应用可能需要重新授权。
+两个构建渠道都输出到 `.build/LingoMend.app`，渠道由构建参数决定，默认为 `development`。如果 `.build` 中还有旧脚本生成的 `LingoMend-Release.app`，先在菜单栏退出该副本，再移除旧应用包。
+
+从菜单栏退出当前进程，再打开 `.build/LingoMend.app`。进入 **设置 → 访问与应用**，允许 TextEdit 或开启其他应用的按需求助，并手动授予 macOS 辅助功能权限。重新构建的临时签名应用可能需要重新授权。
 
 在 **模型服务** 中配置模型。连接测试会发送一次合成请求，即使普通联网未开启也可能产生费用。请勿将 API 密钥放入仓库。
 
